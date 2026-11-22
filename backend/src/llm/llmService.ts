@@ -256,7 +256,7 @@ async function invokeProviderRaw(
     const ai = new GoogleGenAI({
       apiKey: config.apiKey,
       apiVersion: 'v1beta',
-      httpOptions: { timeout: 45000 },
+      httpOptions: { timeout: 90000 },
     });
 
     let lastError: unknown = null;
@@ -299,7 +299,7 @@ async function invokeProviderRaw(
         lastError = err;
         const msg = err instanceof Error ? err.message : String(err);
         const isTransientOrUnavailable =
-          /\b(503|429|404|UNAVAILABLE|RESOURCE_EXHAUSTED|high demand|not found)\b/i.test(
+          /\b(503|504|429|404|UNAVAILABLE|DEADLINE_EXCEEDED|RESOURCE_EXHAUSTED|high demand|not found|timed? out|ETIMEDOUT)\b/i.test(
             msg
           );
         if (!isTransientOrUnavailable) {

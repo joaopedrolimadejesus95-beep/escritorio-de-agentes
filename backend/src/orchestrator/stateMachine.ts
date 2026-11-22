@@ -630,6 +630,45 @@ export class OfficeStateMachine extends EventEmitter {
     await this.emitBudgetUpdate(projectId);
   }
 
+  public async retryFailedTask(projectId: string, taskId: string): Promise<void> {
+    const task = await this.getTaskById(taskId);
+    if (!task || task.projectId !== projectId) {
+      throw new Error('Tarefa não encontrada neste projeto.');
+    }
+    if (task.status !== 'failed') {
+      throw new Error(
+        `A tarefa "${task.taskKey}" não está em estado de falha (status atual: ${task.status}).`
+      );
+    }
+
+    await withTransaction(async (client) => {
+      await client.query(
+        `UPDATE projects SET status = 'running' WHERE id = $1 AND status IN ('failed', 'paused')`,
+        [projectId]
+      );
+      await client.query(
+        `UPDATE tasks
+         SET status = 'ready', attempts = 0, last_error = NULL, updated_at = NOW()
+         WHERE id = $1`,
+        [task.id]
+      );
+    });
+
+    this.updateAgentVisualState({
+      projectId,
+      department: task.department,
+      visualState: 'thinking',
+      activeTaskId: task.id,
+      activeTaskKey: task.taskKey,
+      statusBubble: 'Reiniciando execução do departamento...',
+      taskStatus: 'ready',
+      attempts: 0,
+    });
+
+    await this.emitBudgetUpdate(projectId);
+    void this.tickProject(projectId);
+  }
+
   // --------------------------------------------------------------------------
   // Handoff de Artefatos, Retry Determinístico e Controle de Budget
   // --------------------------------------------------------------------------

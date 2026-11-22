@@ -215,4 +215,8 @@ export interface ClientToServerEvents {
     payload: PauseProjectPayload,
     ack?: (response: { ok: boolean; error?: string }) => void
   ) => void;
+  RETRY_TASK: (
+    payload: ApproveTaskPayload,
+    ack?: (response: { ok: boolean; error?: string }) => void
+  ) => void;
 }

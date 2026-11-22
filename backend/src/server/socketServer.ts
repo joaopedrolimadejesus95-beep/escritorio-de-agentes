@@ -179,6 +179,31 @@ export function createOfficeSocketServer(
       }
     });
 
+    // RETRY_TASK: Reinicia uma tarefa que falhou sem perder as entregas já aprovadas
+    socket.on('RETRY_TASK', async (rawPayload, ack) => {
+      const parsed = ApproveTaskPayloadSchema.safeParse(rawPayload);
+      if (!parsed.success) {
+        const errorMsg = parsed.error.issues.map((i) => i.message).join(', ');
+        ack?.({ ok: false, error: errorMsg });
+        return;
+      }
+
+      const { projectId, taskId } = parsed.data;
+      try {
+        await stateMachine.retryFailedTask(projectId, taskId);
+        const snapshot = await stateMachine.getOfficeSnapshot(projectId);
+        io.to(getProjectRoom(projectId)).emit('OFFICE_SNAPSHOT', snapshot);
+        ack?.({ ok: true });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        socket.emit('SERVER_ERROR', {
+          code: 'RETRY_TASK_ERROR',
+          message,
+        });
+        ack?.({ ok: false, error: message });
+      }
+    });
+
     socket.on('disconnect', () => {
       console.log(`[Socket.io] Cliente desconectado: ${socket.id}`);
     });

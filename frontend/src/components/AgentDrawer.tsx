@@ -26,6 +26,7 @@ export function AgentDrawer() {
   const artifacts = useOfficeStore((s) => s.artifacts);
   const approveTask = useOfficeStore((s) => s.approveTask);
   const rejectTask = useOfficeStore((s) => s.rejectTask);
+  const retryTask = useOfficeStore((s) => s.retryTask);
 
   const [feedback, setFeedback] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -54,6 +55,19 @@ export function AgentDrawer() {
   const awaitingTask = departmentTasks.find(
     (t) => t.status === 'awaiting_approval'
   );
+  const failedTask = departmentTasks.find((t) => t.status === 'failed');
+
+  const handleRetry = async (taskId: string) => {
+    setSubmitting(true);
+    setActionError(null);
+    try {
+      await retryTask(taskId);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const handleApprove = async (taskId: string) => {
     setSubmitting(true);
@@ -263,6 +277,67 @@ export function AgentDrawer() {
           gap: '20px',
         }}
       >
+        {/* Recuperação de Falha sem Perder Etapas Anteriores */}
+        {failedTask && (
+          <section
+            style={{
+              background: '#191014',
+              border: '1px solid rgba(239, 68, 68, 0.45)',
+              borderRadius: '12px',
+              padding: '16px 18px',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                color: '#fca5a5',
+                fontSize: '12.5px',
+                fontWeight: 700,
+                marginBottom: '6px',
+              }}
+            >
+              <AlertCircle size={15} />
+              Execução Interrompida ({failedTask.taskKey})
+            </div>
+            <p
+              style={{
+                fontSize: '12px',
+                color: '#fecaca',
+                marginBottom: '12px',
+                lineHeight: 1.5,
+                overflowWrap: 'anywhere',
+                wordBreak: 'break-word',
+              }}
+            >
+              {failedTask.lastError ??
+                'Ocorreu uma falha na comunicação com o provedor de IA.'}
+            </p>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => handleRetry(failedTask.id)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                background: '#38bdf8',
+                border: 'none',
+                color: '#07131e',
+                fontWeight: 700,
+                fontSize: '12.5px',
+                padding: '9px 14px',
+                borderRadius: '8px',
+                cursor: submitting ? 'not-allowed' : 'pointer',
+              }}
+            >
+              <RotateCcw size={14} />
+              {submitting ? 'Reiniciando...' : 'Tentar Novamente'}
+            </button>
+          </section>
+        )}
+
         {/* Quality Gate Human-in-the-Loop */}
         {awaitingTask && (
           <section
@@ -418,7 +493,15 @@ export function AgentDrawer() {
                     ? 'Orquestrador Diretor (Planejamento DAG)'
                     : 'Nenhuma entrega produzida ainda'}
                 </div>
-                <p style={{ fontSize: '12.5px', color: '#94a3b8', lineHeight: 1.5 }}>
+                <p
+                  style={{
+                    fontSize: '12.5px',
+                    color: '#94a3b8',
+                    lineHeight: 1.5,
+                    overflowWrap: 'anywhere',
+                    wordBreak: 'break-word',
+                  }}
+                >
                   {agent.statusBubble ??
                     'Inicie um projeto no painel superior para acompanhar o trabalho deste especialista.'}
                 </p>

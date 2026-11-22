@@ -113,6 +113,7 @@ interface OfficeStoreState {
   setHoveredDepartment: (department: DepartmentId | null) => void;
   approveTask: (taskId: string) => Promise<void>;
   rejectTask: (taskId: string, feedback: string) => Promise<void>;
+  retryTask: (taskId: string) => Promise<void>;
   pauseProject: (reason?: string) => Promise<void>;
   clearError: () => void;
   pruneExpiredHandoffs: (now: number) => void;
@@ -405,6 +406,18 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => ({
           else reject(new Error(res?.error ?? 'Erro ao solicitar ajuste'));
         }
       );
+    });
+  },
+
+  retryTask: async (taskId: string) => {
+    const { socket, project } = get();
+    if (!socket || !project) return;
+
+    await new Promise<void>((resolve, reject) => {
+      socket.emit('RETRY_TASK', { projectId: project.id, taskId }, (res) => {
+        if (res?.ok) resolve();
+        else reject(new Error(res?.error ?? 'Erro ao reexecutar tarefa'));
+      });
     });
   },
 
