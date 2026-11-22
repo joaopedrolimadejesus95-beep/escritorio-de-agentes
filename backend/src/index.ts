@@ -1,4 +1,7 @@
 import http from 'node:http';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { pool } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
@@ -13,6 +16,9 @@ import {
   createOfficeSocketServer,
   getProjectRoom,
 } from './server/socketServer.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const WORKSPACE_OUTPUTS_DIR = path.resolve(__dirname, '../../workspace_outputs');
 
 const PORT = Number(process.env.PORT ?? 4000);
 
@@ -74,6 +80,48 @@ export async function startServer(): Promise<void> {
           endpoints: ['GET /api/health', 'GET /api/projects', 'POST /api/projects'],
         });
         return;
+      }
+
+      // GET /workspace/:projectId/* - Serve os arquivos reais (HTML, CSS, JS, Markdown, JSON) construídos pelos agentes
+      if (req.method === 'GET' && url.pathname.startsWith('/workspace/')) {
+        const relativeReq = decodeURIComponent(
+          url.pathname.replace(/^\/workspace\//, '')
+        );
+        const safePath = path
+          .normalize(relativeReq)
+          .replace(/^(\.\.(\/|\\|$))+/, '');
+        const fullFilePath = path.join(WORKSPACE_OUTPUTS_DIR, safePath);
+
+        if (!fullFilePath.startsWith(WORKSPACE_OUTPUTS_DIR)) {
+          sendJson(res, 403, { error: 'Acesso negado fora do workspace' });
+          return;
+        }
+
+        try {
+          const stat = await fs.stat(fullFilePath);
+          if (stat.isFile()) {
+            const ext = path.extname(fullFilePath).toLowerCase();
+            const mimeMap: Record<string, string> = {
+              '.html': 'text/html; charset=utf-8',
+              '.css': 'text/css; charset=utf-8',
+              '.js': 'application/javascript; charset=utf-8',
+              '.json': 'application/json; charset=utf-8',
+              '.md': 'text/markdown; charset=utf-8',
+            };
+            const contentType =
+              mimeMap[ext] ?? 'text/plain; charset=utf-8';
+            const content = await fs.readFile(fullFilePath);
+            res.writeHead(200, {
+              'Content-Type': contentType,
+              'Access-Control-Allow-Origin': '*',
+            });
+            res.end(content);
+            return;
+          }
+        } catch {
+          sendJson(res, 404, { error: 'Arquivo do workspace não encontrado' });
+          return;
+        }
       }
 
       // GET /api/health

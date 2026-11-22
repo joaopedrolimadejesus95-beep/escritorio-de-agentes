@@ -33,6 +33,30 @@ export const FunctionalRequirementSchema = z.object({
 export const ResearchArtifactContentSchema = z.object({
   schemaVersion: z.literal('1.0'),
   executiveSummary: z.string().min(50),
+  humanSummary: z
+    .object({
+      headline: z.string(),
+      keyDecisions: z.array(z.string()),
+      sections: z.array(
+        z.object({
+          title: z.string(),
+          summary: z.string(),
+          items: z.array(z.string()),
+        })
+      ),
+      approvalChecklist: z.array(z.string()),
+    })
+    .optional(),
+  builtFiles: z
+    .array(
+      z.object({
+        label: z.string(),
+        relativePath: z.string(),
+        previewUrl: z.string(),
+        fileType: z.enum(['html', 'markdown', 'json', 'code']),
+      })
+    )
+    .optional(),
   targetPersonas: z
     .array(
       z.object({
@@ -185,6 +209,50 @@ export class DefaultResearchExecutorProvider
     const artifact: ResearchArtifactContent = {
       schemaVersion: '1.0',
       executiveSummary: `Análise técnica e mercadológica fundamentada em pesquisa web em tempo real para "${scopeSummary}". Foram consultadas ${webSearchReport.data.results.length} fontes na internet e ${githubReport.data.repositories.length} repositórios no GitHub.`,
+      humanSummary: {
+        headline: `Diagnóstico de Mercado, ${webSearchReport.data.results.length} Fontes Web e Arquitetura Recomendada`,
+        keyDecisions: [
+          `Identificadas 2 personas principais e 3 requisitos críticos de negócio para "${searchKeywords}".`,
+          `Consultadas ${webSearchReport.data.results.length} referências reais na internet e ${githubReport.data.repositories.length} repositórios open-source no GitHub.`,
+          'Mapeados 2 riscos técnicos prioritários com planos concretos de mitigação.',
+        ],
+        sections: [
+          {
+            title: 'Fontes Reais Consultadas na Internet',
+            summary:
+              'Artigos, discussões técnicas e páginas inspecionadas em tempo real pelo agente.',
+            items:
+              webSearchReport.data.results.length > 0
+                ? webSearchReport.data.results.map(
+                    (r) => `${r.title} (${r.source}) — ${r.url}`
+                  )
+                : ['Pesquisa de domínio consolidada'],
+          },
+          {
+            title: 'Requisitos & Riscos Mapeados',
+            summary:
+              'Base determinística que guiará os Pods de Design e Engenharia.',
+            items: [
+              'REQ-01: Ingestão e Validação Determinística de Eventos (< 15ms)',
+              'REQ-02: Onboarding Self-Service e Workspace Isolado',
+              'REQ-03: Governança de Custos e Limite de Execução',
+              'RISK-01 (Alta): Sincronização concorrente mitigada via Snapshot + Locks ACID',
+            ],
+          },
+        ],
+        approvalChecklist: [
+          'Os requisitos levantados cobrem a dor principal do escopo solicitado?',
+          'As referências técnicas servem de boa base para o Design e a Engenharia?',
+        ],
+      },
+      builtFiles: [
+        {
+          label: 'Relatório Completo de Pesquisa (Markdown)',
+          relativePath: 'research/research_report.md',
+          previewUrl: `http://localhost:4000/workspace/${input.projectId}/research/research_report.md`,
+          fileType: 'markdown',
+        },
+      ],
       targetPersonas: [
         {
           role: 'Head de Produto / Operações',
