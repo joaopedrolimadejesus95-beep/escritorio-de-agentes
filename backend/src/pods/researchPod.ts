@@ -51,6 +51,27 @@ export const ResearchArtifactContentSchema = z.object({
     database: z.string().min(3),
     rationale: z.string().min(25),
   }),
+  liveWebSources: z
+    .array(
+      z.object({
+        title: z.string(),
+        url: z.string(),
+        snippet: z.string(),
+        source: z.string(),
+      })
+    )
+    .optional(),
+  githubReferences: z
+    .array(
+      z.object({
+        fullName: z.string(),
+        url: z.string(),
+        stars: z.number(),
+        description: z.string(),
+      })
+    )
+    .optional(),
+  savedWorkspaceFile: z.string().optional(),
   incorporatedFeedbackNotes: z.string().optional(),
   markdownReport: z.string().min(120),
 });
@@ -77,17 +98,93 @@ export class DefaultResearchExecutorProvider
     rawContent: Record<string, unknown>;
     tokensUsed: number;
   }> {
-    // Simula latência realista de raciocínio e síntese para visualização no escritório 3D
-    await new Promise((r) => setTimeout(r, 1400));
-
     const scopeSummary = input.task.objective;
+    const searchKeywords = scopeSummary
+      .replace(/Realizar levantamento de requisitos, benchmarks técnicos e riscos para o escopo:\s*/i, '')
+      .slice(0, 65);
+
+    // 1. Ferramenta Real: Pesquisa na Internet (web_search)
+    const webSearchReport = await input.tools.useTool<{
+      query: string;
+      results: Array<{
+        title: string;
+        url: string;
+        snippet: string;
+        source: string;
+      }>;
+    }>('web_search', {
+      query: searchKeywords,
+      limit: 5,
+    });
+
+    // 2. Ferramenta Real: Radar de Repositórios no GitHub (github_tech_radar)
+    const githubReport = await input.tools.useTool<{
+      topic: string;
+      repositories: Array<{
+        fullName: string;
+        url: string;
+        description: string;
+        stars: number;
+      }>;
+    }>('github_tech_radar', {
+      topic: 'multi-agent orchestration typescript',
+      limit: 3,
+    });
+
+    // 3. Ferramenta Real: Fetch HTTP em tempo real da primeira fonte encontrada (http_fetch_page)
+    const primaryUrl =
+      webSearchReport.data.results[0]?.url ?? 'https://news.ycombinator.com';
+    const pageFetchReport = await input.tools.useTool<{
+      url: string;
+      status: number;
+      title: string;
+      textExcerpt: string;
+    }>('http_fetch_page', {
+      url: primaryUrl,
+      maxChars: 1200,
+    });
+
     const feedbackNote = input.humanFeedback
       ? `Revisão aplicada na tentativa #${input.task.attempts} atendendo ao feedback humano: "${input.humanFeedback}".`
       : undefined;
 
+    const markdownReport = [
+      `# Relatório de Pesquisa & Requisitos Técnicos (Com Fontes Reais da Web)`,
+      `**Objetivo:** ${scopeSummary}`,
+      feedbackNote ? `\n> **Nota de Revisão:** ${feedbackNote}\n` : '',
+      `## 1. Sumário Executivo`,
+      `O levantamento combinou busca ativa na internet (${webSearchReport.data.results.length} fontes web consultadas) e inspeção de repositórios open-source (${githubReport.data.repositories.length} referências do GitHub).`,
+      `## 2. Fontes da Internet Consultadas em Tempo Real`,
+      ...webSearchReport.data.results.map(
+        (r) => `- **[${r.title}](${r.url})** (${r.source}): ${r.snippet}`
+      ),
+      `## 3. Radar GitHub (Open-Source Benchmarks)`,
+      ...githubReport.data.repositories.map(
+        (repo) =>
+          `- **[${repo.fullName}](${repo.url})** (★ ${repo.stars}): ${repo.description}`
+      ),
+      `## 4. Inspeção Direta via HTTP GET`,
+      `- **URL:** ${pageFetchReport.data.url} (Status ${pageFetchReport.data.status})`,
+      `- **Título Extraído:** ${pageFetchReport.data.title}`,
+      `## 5. Requisitos Priorizados`,
+      `- **REQ-01:** Ingestão e Validação Determinística de Eventos`,
+      `- **REQ-02:** Onboarding Self-Service e Workspace Isolado`,
+      `- **REQ-03:** Governança de Custos e Limite de Execução`,
+    ].join('\n');
+
+    // 4. Ferramenta Real: Salvar relatório Markdown em disco no workspace do projeto (workspace_write_file)
+    const fileReport = await input.tools.useTool<{
+      savedPath: string;
+      bytesWritten: number;
+    }>('workspace_write_file', {
+      projectId: input.projectId,
+      relativePath: 'research/research_report.md',
+      content: markdownReport,
+    });
+
     const artifact: ResearchArtifactContent = {
       schemaVersion: '1.0',
-      executiveSummary: `Análise técnica e mercadológica completa para "${scopeSummary}". Identificados 3 requisitos críticos de arquitetura, 2 benchmarks competitivos diretos e matriz de mitigação de riscos para operação determinística.`,
+      executiveSummary: `Análise técnica e mercadológica fundamentada em pesquisa web em tempo real para "${scopeSummary}". Foram consultadas ${webSearchReport.data.results.length} fontes na internet e ${githubReport.data.repositories.length} repositórios no GitHub.`,
       targetPersonas: [
         {
           role: 'Head de Produto / Operações',
@@ -185,21 +282,11 @@ export class DefaultResearchExecutorProvider
         rationale:
           'Garante tipagem ponta a ponta, isolamento transacional de estados e sincronização em tempo real com latência sub-segundo.',
       },
+      liveWebSources: webSearchReport.data.results,
+      githubReferences: githubReport.data.repositories,
+      savedWorkspaceFile: fileReport.data.savedPath,
       ...(feedbackNote ? { incorporatedFeedbackNotes: feedbackNote } : {}),
-      markdownReport: [
-        `# Relatório de Pesquisa & Requisitos Técnicos`,
-        `**Objetivo:** ${scopeSummary}`,
-        feedbackNote ? `\n> **Nota de Revisão:** ${feedbackNote}\n` : '',
-        `## 1. Sumário Executivo`,
-        `O levantamento confirma alta demanda por automação determinística com onboarding self-service e governança estrita de estado.`,
-        `## 2. Requisitos Priorizados`,
-        `- **REQ-01:** Ingestão e Validação Determinística de Eventos`,
-        `- **REQ-02:** Onboarding Self-Service e Workspace Isolado`,
-        `- **REQ-03:** Governança de Custos e Limite de Execução`,
-        `## 3. Riscos e Mitigações`,
-        `- **RISK-01 (High):** Sincronização concorrente mitigada via Snapshot + PostgreSQL Row Locking.`,
-        `- **RISK-02 (Medium):** Performance em JSONB mitigada com índices compostos.`,
-      ].join('\n'),
+      markdownReport,
     };
 
     return {

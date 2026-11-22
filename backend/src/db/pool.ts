@@ -7,13 +7,13 @@ import { PGlite } from '@electric-sql/pglite';
 const { Pool } = pg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export interface QueryResult<TRow = Record<string, any>> {
+export interface QueryResult<TRow = any> {
   rows: TRow[];
   rowCount: number;
 }
 
 export interface DbClient {
-  query<TRow = Record<string, any>>(
+  query<TRow = any>(
     sql: string,
     params?: unknown[]
   ): Promise<QueryResult<TRow>>;
@@ -92,7 +92,7 @@ class HybridPgPool {
     return this.initPromise;
   }
 
-  public async query<TRow = Record<string, any>>(
+  public async query<TRow = any>(
     sql: string,
     params: unknown[] = []
   ): Promise<QueryResult<TRow>> {

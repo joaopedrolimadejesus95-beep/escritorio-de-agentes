@@ -151,9 +151,14 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => ({
       );
     });
 
-    // 2. AGENT_STATE_CHANGED: Atualização discreta de animação e balão
+    // 2. AGENT_STATE_CHANGED: Atualização discreta de animação, ferramenta ativa e balão
     socket.on('AGENT_STATE_CHANGED', (payload: AgentStateChangedPayload) => {
       set((state) => {
+        const prevAgent = state.agents[payload.department];
+        const nextRecentTools = payload.toolCallLog
+          ? [payload.toolCallLog, ...(prevAgent?.recentTools ?? [])].slice(0, 15)
+          : prevAgent?.recentTools ?? [];
+
         const nextAgents = {
           ...state.agents,
           [payload.department]: {
@@ -162,6 +167,11 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => ({
             activeTaskId: payload.activeTaskId,
             activeTaskKey: payload.activeTaskKey,
             statusBubble: payload.statusBubble,
+            activeTool:
+              payload.activeTool !== undefined
+                ? payload.activeTool
+                : prevAgent?.activeTool ?? null,
+            recentTools: nextRecentTools,
             updatedAt: payload.timestamp,
           },
         };

@@ -13,9 +13,15 @@ import {
   type ProjectStatus,
   type TaskDTO,
   type TaskStatus,
+  type ToolCallLogDTO,
 } from '@ai-office/shared';
 import { pool, withTransaction, type DbClient } from '../db/pool.js';
 import { DirectorPlanner } from './planner.js';
+import {
+  defaultToolRegistry,
+  type AgentToolRegistry,
+  type ToolExecutionReport,
+} from '../tools/toolRegistry.js';
 
 // ============================================================================
 // 1. CONTRATO DE POD ESPECIALISTA (EXECUTOR + VALIDADOR DETERMINÍSTICO)
@@ -29,11 +35,19 @@ export interface DependencyArtifactContext {
   content: Record<string, unknown>;
 }
 
+export interface PodToolRuntime {
+  useTool<TOutput = any>(
+    toolName: string,
+    input: Record<string, unknown>
+  ): Promise<ToolExecutionReport<TOutput>>;
+}
+
 export interface PodExecutionInput {
   projectId: string;
   task: TaskDTO;
   dependencyArtifacts: DependencyArtifactContext[];
   humanFeedback?: string | null;
+  tools: PodToolRuntime;
 }
 
 export interface PodExecutionOutput {
@@ -84,7 +98,10 @@ export class OfficeStateMachine extends EventEmitter {
     Record<DepartmentId, AgentDeskStateDTO>
   >();
 
-  constructor(private readonly planner: DirectorPlanner = new DirectorPlanner()) {
+  constructor(
+    private readonly planner: DirectorPlanner = new DirectorPlanner(),
+    private readonly toolRegistry: AgentToolRegistry = defaultToolRegistry
+  ) {
     super();
   }
 
@@ -391,6 +408,45 @@ export class OfficeStateMachine extends EventEmitter {
         task,
         dependencyArtifacts,
         humanFeedback,
+        tools: {
+          useTool: async <TOutput = any>(
+            toolName: string,
+            rawInput: Record<string, unknown>
+          ) => {
+            return await this.toolRegistry.invokeTool<TOutput>({
+              department: task.department,
+              toolName,
+              rawInput,
+              onToolStart: (name) => {
+                this.updateAgentVisualState({
+                  projectId,
+                  department: task.department,
+                  visualState: 'working',
+                  activeTaskId: task.id,
+                  activeTaskKey: task.taskKey,
+                  activeTool: name,
+                  statusBubble: `🔧 Usando ferramenta: ${name}...`,
+                  taskStatus: 'running',
+                  attempts: task.attempts,
+                });
+              },
+              onToolFinish: (log) => {
+                this.updateAgentVisualState({
+                  projectId,
+                  department: task.department,
+                  visualState: 'working',
+                  activeTaskId: task.id,
+                  activeTaskKey: task.taskKey,
+                  activeTool: null,
+                  toolCallLog: log,
+                  statusBubble: log.outputSummary,
+                  taskStatus: 'running',
+                  attempts: task.attempts,
+                });
+              },
+            });
+          },
+        },
       };
 
       const output = await pod.execute(executionInput);
@@ -918,11 +974,17 @@ export class OfficeStateMachine extends EventEmitter {
     activeTaskId: string | null;
     activeTaskKey: string | null;
     statusBubble: string | null;
+    activeTool?: string | null;
+    toolCallLog?: ToolCallLogDTO;
     taskStatus?: TaskStatus;
     attempts?: number;
   }): void {
     const states = this.ensureProjectAgentStates(params.projectId);
     const timestamp = new Date().toISOString();
+    const prev = states[params.department];
+    const recentTools = params.toolCallLog
+      ? [params.toolCallLog, ...(prev?.recentTools ?? [])].slice(0, 15)
+      : prev?.recentTools ?? [];
 
     states[params.department] = {
       department: params.department,
@@ -930,6 +992,11 @@ export class OfficeStateMachine extends EventEmitter {
       activeTaskId: params.activeTaskId,
       activeTaskKey: params.activeTaskKey,
       statusBubble: params.statusBubble,
+      activeTool:
+        params.activeTool !== undefined
+          ? params.activeTool
+          : prev?.activeTool ?? null,
+      recentTools,
       updatedAt: timestamp,
     };
 
@@ -940,6 +1007,8 @@ export class OfficeStateMachine extends EventEmitter {
       activeTaskId: params.activeTaskId,
       activeTaskKey: params.activeTaskKey,
       statusBubble: params.statusBubble,
+      activeTool: states[params.department].activeTool,
+      toolCallLog: params.toolCallLog,
       taskStatus: params.taskStatus,
       attempts: params.attempts,
       timestamp,

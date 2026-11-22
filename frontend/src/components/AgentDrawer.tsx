@@ -273,6 +273,86 @@ export function AgentDrawer() {
           </section>
         )}
 
+        {/* Ferramentas & Acesso à Internet Executados pelo Agente */}
+        <section>
+          <h3
+            style={{
+              fontSize: '12px',
+              fontWeight: 700,
+              color: '#94a3b8',
+              letterSpacing: '0.06em',
+              marginBottom: '10px',
+            }}
+          >
+            FERRAMENTAS & ACESSO WEB ({agent.recentTools?.length ?? 0})
+          </h3>
+
+          {!agent.recentTools || agent.recentTools.length === 0 ? (
+            <div
+              style={{
+                fontSize: '12px',
+                color: '#64748b',
+                background: '#0f172a',
+                padding: '12px',
+                borderRadius: '8px',
+              }}
+            >
+              Nenhuma chamada de ferramenta registrada ainda para este Pod.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {agent.recentTools.map((toolLog, idx) => (
+                <div
+                  key={`${toolLog.timestamp}-${idx}`}
+                  style={{
+                    background: '#0f172a',
+                    border: `1px solid ${toolLog.success ? '#1e293b' : '#ef4444'}`,
+                    borderRadius: '8px',
+                    padding: '10px 12px',
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      marginBottom: '4px',
+                    }}
+                  >
+                    <code
+                      style={{
+                        fontSize: '11px',
+                        fontWeight: 800,
+                        color: '#38bdf8',
+                      }}
+                    >
+                      🔧 {toolLog.toolName}
+                    </code>
+                    <span
+                      style={{
+                        fontSize: '10px',
+                        color: toolLog.success ? '#4ade80' : '#f87171',
+                        fontWeight: 700,
+                      }}
+                    >
+                      {toolLog.durationMs}ms
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      fontSize: '11px',
+                      color: '#cbd5e1',
+                      lineHeight: 1.35,
+                    }}
+                  >
+                    {toolLog.outputSummary}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
         {/* Tarefas do DAG atribuídas a este Departamento */}
         <section>
           <h3

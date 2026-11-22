@@ -82,12 +82,23 @@ export interface ArtifactDTO<TContent = Record<string, unknown>> {
   createdAt: string;
 }
 
+export interface ToolCallLogDTO {
+  toolName: string;
+  input: Record<string, unknown>;
+  outputSummary: string;
+  durationMs: number;
+  success: boolean;
+  timestamp: string;
+}
+
 export interface AgentDeskStateDTO {
   department: DepartmentId;
   visualState: AgentVisualState;
   activeTaskId: string | null;
   activeTaskKey: string | null;
   statusBubble: string | null;
+  activeTool?: string | null;
+  recentTools?: ToolCallLogDTO[];
   updatedAt: string;
 }
 
@@ -109,6 +120,8 @@ export interface AgentStateChangedPayload {
   activeTaskId: string | null;
   activeTaskKey: string | null;
   statusBubble: string | null;
+  activeTool?: string | null;
+  toolCallLog?: ToolCallLogDTO;
   taskStatus?: TaskStatus;
   attempts?: number;
   timestamp: string;

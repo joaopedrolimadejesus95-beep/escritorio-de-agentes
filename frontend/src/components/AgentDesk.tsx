@@ -393,6 +393,22 @@ export function AgentDesk({ config }: AgentDeskProps) {
               {VISUAL_STATE_BADGE_LABELS[agentState.visualState]}
             </span>
           </div>
+          {agentState.activeTool && (
+            <div
+              style={{
+                background: 'rgba(56, 189, 248, 0.16)',
+                border: '1px solid #38bdf8',
+                color: '#7dd3fc',
+                fontSize: '10px',
+                fontWeight: 700,
+                padding: '2px 6px',
+                borderRadius: '4px',
+                marginBottom: '4px',
+              }}
+            >
+              🌐 Tool: {agentState.activeTool}
+            </div>
+          )}
           {agentState.statusBubble && (
             <div
               style={{

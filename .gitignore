@@ -2,8 +2,9 @@
 node_modules/
 npm-debug.log*
 
-# Banco de dados PostgreSQL embarcado (PGlite)
+# Banco de dados PostgreSQL embarcado (PGlite) e arquivos gerados pelos agentes
 backend/.pgdata/
+workspace_outputs/
 
 # Build / Dist
 dist/
