@@ -310,7 +310,78 @@ export const GithubTechRadarTool: AgentToolDefinition<
 };
 
 /**
- * Tool 4: `workspace_write_file`
+ * Tool 4: `npm_package_radar`
+ * Consulta o registro oficial do NPM (registry.npmjs.org) em tempo real para descobrir
+ * pacotes, bibliotecas, versões atuais, downloads/score e CDN links para uso pelos agentes.
+ */
+const NpmSearchInputSchema = z.object({
+  query: z.string().min(2).max(100),
+  limit: z.number().int().min(1).max(6).default(4),
+});
+
+export interface NpmPackageItem {
+  name: string;
+  version: string;
+  description: string;
+  npmUrl: string;
+  cdnUrl: string;
+}
+
+export const NpmPackageRadarTool: AgentToolDefinition<
+  z.infer<typeof NpmSearchInputSchema>,
+  { query: string; packages: NpmPackageItem[] }
+> = {
+  name: 'npm_package_radar',
+  description:
+    'Pesquisa pacotes e bibliotecas reais no registro oficial do NPM (registry.npmjs.org) e gera URLs de CDN prontas para uso.',
+  allowedDepartments: ['research', 'design', 'engineering', 'growth'],
+  inputSchema: NpmSearchInputSchema,
+  async execute({ query, limit }) {
+    const encoded = encodeURIComponent(query);
+    const packages: NpmPackageItem[] = [];
+
+    try {
+      const res = await fetch(
+        `https://registry.npmjs.org/-/v1/search?text=${encoded}&size=${limit}`,
+        { signal: AbortSignal.timeout(4500) }
+      );
+      if (res.ok) {
+        const json = (await res.json()) as {
+          objects?: Array<{
+            package: {
+              name: string;
+              version: string;
+              description?: string;
+              links?: { npm?: string };
+            };
+          }>;
+        };
+
+        for (const obj of json.objects ?? []) {
+          const pkg = obj.package;
+          packages.push({
+            name: pkg.name,
+            version: pkg.version,
+            description: pkg.description ?? 'Biblioteca NPM verificada',
+            npmUrl:
+              pkg.links?.npm ?? `https://www.npmjs.com/package/${pkg.name}`,
+            cdnUrl: `https://cdn.jsdelivr.net/npm/${pkg.name}@${pkg.version}`,
+          });
+        }
+      }
+    } catch {
+      // Fallback silencioso em caso de timeout
+    }
+
+    return {
+      data: { query, packages },
+      summary: `NPM Registry ("${query}"): ${packages.length} bibliotecas verificadas (${packages.map((p) => `${p.name}@${p.version}`).join(', ') || 'nenhuma'})`,
+    };
+  },
+};
+
+/**
+ * Tool 5: `workspace_write_file`
  * Permite que os Pods escrevam arquivos reais (Markdown, especificações, JSON, código) em disco
  * dentro do diretório sandboxed `workspace_outputs/<projectId>/`.
  */
@@ -367,6 +438,7 @@ export class AgentToolRegistry {
     this.register(WebSearchTool);
     this.register(HttpFetchPageTool);
     this.register(GithubTechRadarTool);
+    this.register(NpmPackageRadarTool);
     this.register(WorkspaceWriteFileTool);
   }
 

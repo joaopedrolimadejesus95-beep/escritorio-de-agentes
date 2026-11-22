@@ -6,6 +6,7 @@ import type {
   PodExecutionOutput,
 } from '../orchestrator/stateMachine.js';
 import { callStructuredLLM } from '../llm/llmService.js';
+import { DEPARTMENT_SKILL_PACKS } from './agentSkills.js';
 
 // ============================================================================
 // 1. CONTRATO HUMAN-FRIENDLY + REPRODUTÍVEL PARA TODOS OS ARTEFATOS
@@ -67,12 +68,17 @@ export class DesignPod implements DepartmentPod {
       (researchArtifact?.content?.executiveSummary as string | undefined) ??
       input.task.objective;
 
-    // 1. Pesquisa referências de UX/UI na internet em tempo real
+    // 1. Pesquisa referências de UX/UI na internet e pacotes de ícones no NPM
     const webTrends = await input.tools.useTool<{
       results: Array<{ title: string; url: string; snippet: string }>;
     }>('web_search', {
       query: `UI UX design system dashboard ${projectScope.slice(0, 40)}`,
       limit: 3,
+    });
+
+    await input.tools.useTool('npm_package_radar', {
+      query: 'lucide-icons design-tokens',
+      limit: 2,
     });
 
     const depNames = input.dependencyArtifacts.map(
@@ -83,75 +89,191 @@ export class DesignPod implements DepartmentPod {
       ? `Feedback humano aplicado nesta versão: "${input.humanFeedback}"`
       : undefined;
 
-    // Escolhe paleta de acordo com eventual feedback humano (ex: se pediu outra cor/tema)
+    // Escolhe paleta de acordo com eventual feedback humano
     const wantsLightOrWarm =
       input.humanFeedback &&
-      /claro|light|laranja|verde|roxo|warm/i.test(input.humanFeedback);
+      /claro|light|laranja|verde|roxo|warm|esmeralda/i.test(input.humanFeedback);
     const primaryColor = wantsLightOrWarm ? '#10b981' : '#38bdf8';
     const accentColor = wantsLightOrWarm ? '#f59e0b' : '#a855f7';
     const surfaceColor = '#0f172a';
+    const designSkill = DEPARTMENT_SKILL_PACKS.design;
 
-    // 2. Constrói o Protótipo HTML/CSS Interativo de Alta Fidelidade do Produto
+    // 2. Constrói o Protótipo HTML/CSS/JS Interativo de Alta Fidelidade (Com Lucide Icons, Theme Switcher, Accessible Tabs & Native <dialog>)
     const prototypeHtml = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Protótipo de UI — Pod Design</title>
+  <title>Protótipo de UI & Design System — Pod Design</title>
+  <script src="https://unpkg.com/lucide@latest"></script>
   <style>
     :root {
       --primary: ${primaryColor};
       --accent: ${accentColor};
       --surface: ${surfaceColor};
-      --bg: #090d16;
+      --bg: #070a12;
       --text: #f8fafc;
       --muted: #94a3b8;
+      --border: #1e293b;
+    }
+    body[data-theme="light"] {
+      --surface: #ffffff;
+      --bg: #f1f5f9;
+      --text: #0f172a;
+      --muted: #475569;
+      --border: #cbd5e1;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', system-ui, sans-serif; }
-    body { background: var(--bg); color: var(--text); padding: 24px; }
-    .badge { display: inline-block; background: rgba(56, 189, 248, 0.15); color: var(--primary); border: 1px solid var(--primary); padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; margin-bottom: 12px; }
-    h1 { font-size: 22px; margin-bottom: 8px; }
-    p.sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; line-height: 1.5; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 20px; }
-    .card { background: var(--surface); border: 1px solid #1e293b; border-radius: 12px; padding: 16px; }
-    .card h3 { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+    body { background: var(--bg); color: var(--text); padding: 22px; transition: background 0.25s, color 0.25s; }
+    .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
+    .badge { display: inline-flex; align-items: center; gap: 6px; background: rgba(56, 189, 248, 0.15); color: var(--primary); border: 1px solid var(--primary); padding: 4px 11px; border-radius: 999px; font-size: 11px; font-weight: 800; }
+    .theme-btn { background: var(--surface); color: var(--text); border: 1px solid var(--border); padding: 7px 12px; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+    h1 { font-size: 21px; font-weight: 800; margin-bottom: 6px; }
+    p.sub { color: var(--muted); font-size: 12.5px; margin-bottom: 18px; line-height: 1.5; }
+
+    /* Modern Web Guidance: Accessible Tablist with border-block-end pseudo-element (WCAG 1.4.1) */
+    .tablist { display: flex; overflow-x: auto; border-bottom: 1px solid var(--border); margin-bottom: 18px; gap: 6px; }
+    [role="tab"] { position: relative; flex: none; background: transparent; border: none; color: var(--muted); padding: 10px 16px; font-size: 12.5px; font-weight: 700; cursor: pointer; }
+    [role="tab"][aria-selected="true"] { color: var(--primary); }
+    [role="tab"][aria-selected="true"]::after { content: ""; position: absolute; inset: auto 0 0; border-block-end: 3px solid var(--primary); }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-bottom: 18px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+    .card h3 { font-size: 11px; color: var(--muted); font-weight: 800; letter-spacing: 0.05em; margin-bottom: 6px; }
     .card .val { font-size: 24px; font-weight: 800; color: var(--primary); }
-    .btn { background: linear-gradient(135deg, var(--primary), var(--accent)); color: #090d16; border: none; padding: 10px 16px; border-radius: 8px; font-weight: 800; cursor: pointer; font-size: 13px; }
-    .tokens { display: flex; gap: 10px; margin-top: 16px; }
-    .swatch { display: flex; align-items: center; gap: 8px; background: #1e293b; padding: 6px 12px; border-radius: 8px; font-size: 12px; }
+    .btn { background: linear-gradient(135deg, var(--primary), var(--accent)); color: #090d16; border: none; padding: 9px 15px; border-radius: 8px; font-weight: 800; cursor: pointer; font-size: 12.5px; display: inline-flex; align-items: center; gap: 6px; }
+    .tokens { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+    .swatch { display: flex; align-items: center; gap: 8px; background: var(--bg); border: 1px solid var(--border); padding: 7px 12px; border-radius: 8px; font-size: 12px; font-weight: 600; }
     .dot { width: 14px; height: 14px; border-radius: 50%; }
+
+    /* Modern Web Guidance: Responsive Table with @container */
+    .table-wrapper { overflow: auto; max-inline-size: 100%; container-type: inline-size; border: 1px solid var(--border); border-radius: 10px; }
+    table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; --label-1: "Componente"; --label-2: "Estado"; --label-3: "Acessibilidade"; }
+    thead { position: sticky; inset-block-start: 0; z-index: 1; background: var(--border); }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+    tbody th { position: sticky; inset-inline-start: 0; background: var(--surface); color: var(--primary); }
+    @container (width < 520px) {
+      table, thead, tbody, tr, th, td { display: block; }
+      thead { display: none; }
+      tr { margin-block-end: 1rem; border: 1px solid var(--border); }
+      td:nth-child(2)::before { content: var(--label-2) ": "; font-weight: 700; }
+      td:nth-child(3)::before { content: var(--label-3) ": "; font-weight: 700; }
+    }
+
+    dialog { margin: auto; background: var(--surface); color: var(--text); border: 1.5px solid var(--primary); border-radius: 14px; padding: 22px; max-width: 420px; box-shadow: 0 20px 50px rgba(0,0,0,0.7); }
+    dialog::backdrop { background: rgba(7, 10, 18, 0.75); backdrop-filter: blur(4px); }
   </style>
 </head>
 <body>
-  <span class="badge">PROTÓTIPO INTERATIVO • POD DESIGN</span>
-  <h1>Wireframe & Design System do Produto</h1>
+  <div class="top-bar">
+    <span class="badge">🎨 SKILL: ${designSkill.skillName} v${designSkill.version}</span>
+    <button type="button" class="theme-btn" onclick="toggleTheme()">🌗 Alternar Tema Dark / Light</button>
+  </div>
+
+  <h1>Design System & Protótipo Interativo</h1>
   <p class="sub">${projectScope}</p>
-  ${feedbackText ? `<div style="background:rgba(16,185,129,0.15);border:1px solid #10b981;padding:10px 14px;border-radius:8px;margin-bottom:16px;font-size:12px;color:#6ee7b7;">✓ ${feedbackText}</div>` : ''}
-  <div class="grid">
-    <div class="card">
-      <h3>ONBOARDING SELF-SERVICE</h3>
-      <div class="val">&lt; 3 min</div>
-      <p style="font-size:12px;color:var(--muted);margin-top:6px;">Fluxo guiado em 3 etapas com validação instantânea.</p>
-    </div>
-    <div class="card">
-      <h3>CONFIABILIDADE DE DADOS</h3>
-      <div class="val">99.98%</div>
-      <p style="font-size:12px;color:var(--muted);margin-top:6px;">Contratos monitorados em tempo real.</p>
-    </div>
-    <div class="card">
-      <h3>AÇÃO RÁPIDA</h3>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">Simule a interação principal do usuário:</p>
-      <button class="btn" onclick="alert('Fluxo principal validado com sucesso no protótipo!')">Testar Fluxo Principal</button>
+
+  ${feedbackText ? `<div style="background:rgba(16,185,129,0.15);border:1px solid #10b981;padding:10px 14px;border-radius:8px;margin-bottom:16px;font-size:12px;color:#34d399;font-weight:700;">✓ ${feedbackText}</div>` : ''}
+
+  <!-- Abas Acessíveis com Indicador Geométrico -->
+  <div class="tablist" role="tablist" aria-label="Visualizações do Protótipo">
+    <button type="button" role="tab" id="tab-overview" aria-selected="true" onclick="switchTab('overview')">1. Visão Geral & Fluxo</button>
+    <button type="button" role="tab" id="tab-tokens" aria-selected="false" onclick="switchTab('tokens')">2. Design Tokens & Paleta</button>
+    <button type="button" role="tab" id="tab-components" aria-selected="false" onclick="switchTab('components')">3. Catálogo de Componentes</button>
+  </div>
+
+  <!-- Painel 1: Overview -->
+  <div id="panel-overview" role="tabpanel" aria-labelledby="tab-overview">
+    <div class="grid">
+      <div class="card">
+        <h3>ONBOARDING SELF-SERVICE</h3>
+        <div class="val">&lt; 3 min</div>
+        <p style="font-size:12px;color:var(--muted);margin-top:6px;">Jornada progressiva em 3 passos sem fricção cognitiva.</p>
+      </div>
+      <div class="card">
+        <h3>CONTRASTE WCAG AA/AAA</h3>
+        <div class="val">100%</div>
+        <p style="font-size:12px;color:var(--muted);margin-top:6px;">Indicadores visuais geométricos e foco gerenciado.</p>
+      </div>
+      <div class="card">
+        <h3>INTERAÇÃO NATIVA</h3>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">Teste o modal nativo HTML5 <code>&lt;dialog&gt;</code> do fluxo:</p>
+        <button type="button" class="btn" onclick="document.getElementById('onboardingModal').showModal()">✨ Simular Onboarding</button>
+      </div>
     </div>
   </div>
-  <div class="card">
-    <h3>TOKENS VISUAIS APROVADOS</h3>
-    <div class="tokens">
-      <div class="swatch"><span class="dot" style="background:${primaryColor}"></span> Primary: ${primaryColor}</div>
-      <div class="swatch"><span class="dot" style="background:${accentColor}"></span> Accent: ${accentColor}</div>
-      <div class="swatch"><span class="dot" style="background:${surfaceColor}"></span> Surface: ${surfaceColor}</div>
+
+  <!-- Painel 2: Tokens -->
+  <div id="panel-tokens" role="tabpanel" aria-labelledby="tab-tokens" hidden="until-found">
+    <div class="card">
+      <h3>TOKENS DE COR & SUPERFÍCIE (VARIÁVEIS CSS)</h3>
+      <div class="tokens">
+        <div class="swatch"><span class="dot" style="background:${primaryColor}"></span> --primary: ${primaryColor}</div>
+        <div class="swatch"><span class="dot" style="background:${accentColor}"></span> --accent: ${accentColor}</div>
+        <div class="swatch"><span class="dot" style="background:${surfaceColor}"></span> --surface: ${surfaceColor}</div>
+      </div>
     </div>
   </div>
+
+  <!-- Painel 3: Componentes -->
+  <div id="panel-components" role="tabpanel" aria-labelledby="tab-components" hidden="until-found">
+    <div tabindex="0" role="region" aria-label="Matriz de componentes de UI" class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>Componente</th>
+            <th>Estado</th>
+            <th>Padrão Modern Web Guidance</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th>Responsive Data Table</th>
+            <td>Pronto (v2)</td>
+            <td>Container Queries (@container) + Sticky Headers + role="region"</td>
+          </tr>
+          <tr>
+            <th>Accessible Tablist</th>
+            <td>Pronto (v2)</td>
+            <td>Indicador border-block-end (WCAG 1.4.1) + hidden="until-found"</td>
+          </tr>
+          <tr>
+            <th>Onboarding Dialog</th>
+            <td>Pronto (v2)</td>
+            <td>Elemento nativo &lt;dialog&gt; com showModal() e ::backdrop</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <dialog id="onboardingModal">
+    <h2 style="font-size:17px;margin-bottom:8px;color:var(--primary);">🚀 Assistente Self-Service</h2>
+    <p style="font-size:12.5px;color:var(--muted);margin-bottom:16px;line-height:1.5;">
+      Este modal utiliza a API nativa <code>HTMLDialogElement.showModal()</code> com suporte automático à tecla <code>Esc</code> e gerenciamento de foco acessível.
+    </p>
+    <div style="display:flex;justify-content:flex-end;gap:8px;">
+      <button type="button" class="btn" onclick="document.getElementById('onboardingModal').close()">Concluir Simulação ✓</button>
+    </div>
+  </dialog>
+
+  <script>
+    if (window.lucide) lucide.createIcons();
+    function toggleTheme() {
+      const current = document.body.getAttribute('data-theme');
+      document.body.setAttribute('data-theme', current === 'light' ? 'dark' : 'light');
+    }
+    function switchTab(name) {
+      ['overview', 'tokens', 'components'].forEach(id => {
+        const tab = document.getElementById('tab-' + id);
+        const panel = document.getElementById('panel-' + id);
+        const selected = id === name;
+        tab.setAttribute('aria-selected', String(selected));
+        if (selected) panel.removeAttribute('hidden');
+        else panel.setAttribute('hidden', 'until-found');
+      });
+    }
+  </script>
 </body>
 </html>`;
 
@@ -358,7 +480,7 @@ export class EngineeringPod implements DepartmentPod {
   public readonly department = 'engineering' as const;
 
   public async execute(input: PodExecutionInput): Promise<PodExecutionOutput> {
-    // 1. Consulta repositórios reais no GitHub via github_tech_radar
+    // 1. Consulta repositórios reais no GitHub e bibliotecas analíticas no NPM
     const githubRadar = await input.tools.useTool<{
       repositories: Array<{
         fullName: string;
@@ -368,6 +490,13 @@ export class EngineeringPod implements DepartmentPod {
       }>;
     }>('github_tech_radar', {
       topic: 'saas analytics dashboard typescript',
+      limit: 3,
+    });
+
+    const npmLibs = await input.tools.useTool<{
+      packages: Array<{ name: string; version: string; cdnUrl: string }>;
+    }>('npm_package_radar', {
+      query: 'chart.js lucide',
       limit: 3,
     });
 
@@ -386,21 +515,21 @@ export class EngineeringPod implements DepartmentPod {
       surfaceColor: '#0f172a',
     };
 
-    const projectHeadline =
-      (researchDep?.content?.executiveSummary as string | undefined) ??
-      input.task.objective;
-
     const feedbackText = input.humanFeedback
       ? `Ajuste de engenharia implementado conforme revisão humana: "${input.humanFeedback}"`
       : undefined;
 
-    // 2. Constrói um MVP Funcional e Interativo (HTML + CSS + JavaScript Real) que o usuário pode usar dentro do Drawer!
+    const engSkill = DEPARTMENT_SKILL_PACKS.engineering;
+
+    // 2. Constrói um MVP Full-Stack Funcional de Alta Qualidade (Com Gráficos Chart.js Reais, Busca/Filtro, Exportação CSV, Persistência LocalStorage e Tabelas Responsivas @container)
     const functionalAppHtml = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MVP Funcional Construído — Pod Engineering</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
   <style>
     :root {
       --primary: ${designTokens.primaryColor ?? '#38bdf8'};
@@ -409,34 +538,53 @@ export class EngineeringPod implements DepartmentPod {
       --bg: #070a12;
       --text: #f8fafc;
       --muted: #94a3b8;
+      --border: #1e293b;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', system-ui, sans-serif; }
     body { background: var(--bg); color: var(--text); padding: 20px; }
-    header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 14px; margin-bottom: 18px; }
+    header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 14px; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
     .tag { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid #10b981; font-size: 11px; font-weight: 800; padding: 3px 10px; border-radius: 999px; }
-    .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 18px; }
-    .kpi { background: var(--surface); border: 1px solid #1e293b; border-radius: 10px; padding: 14px; }
-    .kpi span { font-size: 11px; color: var(--muted); font-weight: 700; }
+    .header-actions { display: flex; gap: 8px; }
+    .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+    .kpi span { font-size: 10.5px; color: var(--muted); font-weight: 800; letter-spacing: 0.04em; }
     .kpi strong { display: block; font-size: 22px; color: var(--primary); margin-top: 4px; }
-    .panel { background: var(--surface); border: 1px solid #1e293b; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
-    .panel h2 { font-size: 14px; margin-bottom: 12px; color: #e2e8f0; }
-    .controls { display: flex; gap: 8px; margin-bottom: 12px; }
-    input, select { background: #090d16; border: 1px solid #334155; color: #fff; padding: 8px 10px; border-radius: 6px; font-size: 12px; flex: 1; }
+    .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+    .panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
+    .panel h2 { font-size: 13.5px; color: #e2e8f0; font-weight: 800; }
+    .controls { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+    input, select { background: #090d16; border: 1px solid #334155; color: #fff; padding: 8px 10px; border-radius: 6px; font-size: 12px; flex: 1; min-width: 140px; }
     button { background: var(--primary); color: #090d16; border: none; padding: 8px 14px; border-radius: 6px; font-weight: 800; font-size: 12px; cursor: pointer; }
-    button:hover { opacity: 0.9; }
-    table { width: 100%; border-collapse: collapse; font-size: 12px; }
-    th, td { text-align: left; padding: 8px; border-bottom: 1px solid #1e293b; }
-    th { color: var(--muted); font-size: 11px; }
-    .status-ok { color: #4ade80; font-weight: 700; }
+    button.secondary { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; }
+    button:hover { opacity: 0.92; }
+
+    /* Modern Web Guidance: Responsive Table with @container and sticky headers */
+    .table-wrapper { overflow: auto; max-inline-size: 100%; max-block-size: 260px; container-type: inline-size; border: 1px solid var(--border); border-radius: 8px; }
+    table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; --label-1: "Pipeline"; --label-2: "Prioridade"; --label-3: "Score IA"; --label-4: "Status"; }
+    thead { position: sticky; inset-block-start: 0; z-index: 1; background: #1e293b; }
+    th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    tbody th { position: sticky; inset-inline-start: 0; background: var(--surface); color: #f8fafc; font-weight: 700; }
+    .status-ok { color: #4ade80; font-weight: 800; }
+    @container (width < 520px) {
+      table, thead, tbody, tr, th, td { display: block; white-space: normal; }
+      thead { display: none; }
+      tr { margin-block-end: 0.75rem; border: 1px solid #334155; }
+      td:nth-child(2)::before { content: var(--label-2) ": "; font-weight: 700; color: var(--muted); }
+      td:nth-child(3)::before { content: var(--label-3) ": "; font-weight: 700; color: var(--muted); }
+      td:nth-child(4)::before { content: var(--label-4) ": "; font-weight: 700; color: var(--muted); }
+    }
   </style>
 </head>
 <body>
   <header>
     <div>
-      <span class="tag">✓ APLICAÇÃO FUNCIONAL • POD ENGINEERING</span>
-      <h1 style="font-size:18px;margin-top:6px;">MVP Operacional Interativo</h1>
+      <span class="tag">⚙️ SKILL: ${engSkill.skillName} v${engSkill.version}</span>
+      <h1 style="font-size:18px;margin-top:6px;">Aplicação Analítica Preditiva (Chart.js + LocalStorage)</h1>
     </div>
-    <button onclick="simulatePrediction()">⚡ Rodar Simulação Preditiva</button>
+    <div class="header-actions">
+      <button type="button" class="secondary" onclick="exportCsv()">⬇ Exportar CSV</button>
+      <button type="button" onclick="simulatePrediction()">⚡ Simular Lote IA</button>
+    </div>
   </header>
 
   ${feedbackText ? `<div style="background:rgba(56,189,248,0.12);border:1px solid var(--primary);padding:10px;border-radius:8px;margin-bottom:14px;font-size:12px;">${feedbackText}</div>` : ''}
@@ -447,76 +595,155 @@ export class EngineeringPod implements DepartmentPod {
       <strong id="kpiEvents">14.280</strong>
     </div>
     <div class="kpi">
-      <span>SCORE PREDITIVO MÉDIO</span>
+      <span>CONFIANÇA PREDITIVA</span>
       <strong id="kpiScore">94.2%</strong>
     </div>
     <div class="kpi">
-      <span>LATÊNCIA DO MOTOR</span>
+      <span>LATÊNCIA P99</span>
       <strong id="kpiLatency">11 ms</strong>
     </div>
   </div>
 
+  <!-- Gráfico Chart.js em Tempo Real -->
   <div class="panel">
-    <h2>Simulador de Eventos & Regras de Negócio</h2>
+    <div class="panel-head">
+      <h2>📈 Série Temporal de Eventos & Confiança Preditiva (Chart.js 4.4)</h2>
+    </div>
+    <div style="height:175px;position:relative;">
+      <canvas id="liveMetricsChart"></canvas>
+    </div>
+  </div>
+
+  <!-- Tabela Semântica Responsiva com Busca e Cadastro -->
+  <div class="panel">
+    <div class="panel-head">
+      <h2>🗄️ Motor de Eventos & Regras de Negócio</h2>
+      <input id="searchFilter" type="text" placeholder="🔍 Filtrar registros em tempo real..." oninput="renderTable()" style="max-width:220px;" />
+    </div>
     <div class="controls">
-      <input id="itemInput" type="text" placeholder="Digite um novo evento, cliente ou métrica..." value="Pipeline B2B Enterprise #402" />
+      <input id="itemInput" type="text" placeholder="Nome do evento, cliente ou pipeline..." value="Workspace Enterprise #402" />
       <select id="priorityInput">
         <option value="ALTA">Prioridade Alta</option>
-        <option value="MÉDIA">Prioridade Média</option>
         <option value="CRÍTICA">Prioridade Crítica</option>
+        <option value="MÉDIA">Prioridade Média</option>
       </select>
-      <button onclick="addRecord()">+ Registrar e Analisar</button>
+      <button type="button" onclick="addRecord()">+ Registrar e Analisar</button>
     </div>
-    <table>
-      <thead>
-        <tr>
-          <th>IDENTIFICADOR</th>
-          <th>PRIORIDADE</th>
-          <th>PREVISÃO IA</th>
-          <th>STATUS</th>
-        </tr>
-      </thead>
-      <tbody id="recordsBody">
-        <tr>
-          <td>Workspace Self-Service #101</td>
-          <td>ALTA</td>
-          <td>Conversão Estimada: 89%</td>
-          <td class="status-ok">ATIVO</td>
-        </tr>
-        <tr>
-          <td>Conector Analítico Tempo Real #204</td>
-          <td>CRÍTICA</td>
-          <td>Risco de Churn: Baixo (4%)</td>
-          <td class="status-ok">VALIDADO</td>
-        </tr>
-      </tbody>
-    </table>
+    <div tabindex="0" role="region" aria-labelledby="events-table-caption" class="table-wrapper">
+      <table>
+        <caption id="events-table-caption" style="display:none;">Registros processados pelo motor preditivo</caption>
+        <thead>
+          <tr>
+            <th>Pipeline / Tenant</th>
+            <th>Prioridade</th>
+            <th>Score Preditivo</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="recordsBody"></tbody>
+      </table>
+    </div>
   </div>
 
   <script>
-    let count = 14280;
+    const STORAGE_KEY = 'ai_office_eng_records_v2';
+    const defaultRecords = [
+      { name: 'Conector Real-Time FinTech #309', priority: 'CRÍTICA', score: 96.4, status: 'VALIDADO' },
+      { name: 'Workspace Self-Service #101', priority: 'ALTA', score: 91.8, status: 'ATIVO' },
+      { name: 'Cluster Predição Churn #204', priority: 'MÉDIA', score: 89.5, status: 'PROCESSADO' }
+    ];
+    let records = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null') || defaultRecords;
+    let totalEvents = 14280;
+    let chartInstance = null;
+
+    function initChart() {
+      const ctx = document.getElementById('liveMetricsChart');
+      if (!ctx || !window.Chart) return;
+      chartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: ['T-5m', 'T-4m', 'T-3m', 'T-2m', 'T-1m', 'Agora'],
+          datasets: [{
+            label: 'Confiança Preditiva (%)',
+            data: [89.2, 90.5, 91.8, 93.1, 92.7, 94.2],
+            borderColor: '${designTokens.primaryColor ?? '#38bdf8'}',
+            backgroundColor: 'rgba(56, 189, 248, 0.16)',
+            fill: true,
+            tension: 0.35,
+            borderWidth: 2
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            y: { min: 80, max: 100, grid: { color: '#1e293b' }, ticks: { color: '#94a3b8', font: { size: 10 } } },
+            x: { grid: { color: '#1e293b' }, ticks: { color: '#94a3b8', font: { size: 10 } } }
+          },
+          plugins: { legend: { labels: { color: '#e2e8f0', font: { size: 11 } } } }
+        }
+      });
+    }
+
+    function renderTable() {
+      const q = (document.getElementById('searchFilter').value || '').toLowerCase();
+      const tbody = document.getElementById('recordsBody');
+      tbody.innerHTML = '';
+      records
+        .filter(r => r.name.toLowerCase().includes(q) || r.priority.toLowerCase().includes(q))
+        .forEach(r => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = '<th>' + r.name + '</th><td>' + r.priority + '</td><td>' + r.score + '%</td><td class="status-ok">' + r.status + '</td>';
+          tbody.appendChild(tr);
+        });
+    }
+
     function addRecord() {
       const input = document.getElementById('itemInput');
       const prio = document.getElementById('priorityInput').value;
-      const name = input.value.trim() || 'Novo Registro #' + Math.floor(Math.random() * 900);
-      const tbody = document.getElementById('recordsBody');
-      const score = (85 + Math.random() * 14).toFixed(1);
-      const tr = document.createElement('tr');
-      tr.innerHTML = '<td>' + name + '</td><td>' + prio + '</td><td>Confiança Preditiva: ' + score + '%</td><td class="status-ok">PROCESSADO</td>';
-      tbody.prepend(tr);
-      count += 125;
-      document.getElementById('kpiEvents').textContent = count.toLocaleString('pt-BR');
+      const name = input.value.trim() || 'Pipeline Enterprise #' + Math.floor(Math.random() * 900);
+      const score = Number((88 + Math.random() * 11).toFixed(1));
+      records.unshift({ name, priority: prio, score, status: 'PROCESSADO' });
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(records.slice(0, 25)));
+      totalEvents += 210;
+      document.getElementById('kpiEvents').textContent = totalEvents.toLocaleString('pt-BR');
       document.getElementById('kpiScore').textContent = score + '%';
       input.value = '';
+      renderTable();
+      if (chartInstance) {
+        chartInstance.data.datasets[0].data.shift();
+        chartInstance.data.datasets[0].data.push(score);
+        chartInstance.update();
+      }
     }
+
     function simulatePrediction() {
-      count += 840;
-      const newScore = (91 + Math.random() * 8).toFixed(1);
-      const newLat = Math.floor(8 + Math.random() * 7);
-      document.getElementById('kpiEvents').textContent = count.toLocaleString('pt-BR');
-      document.getElementById('kpiScore').textContent = newScore + '%';
-      document.getElementById('kpiLatency').textContent = newLat + ' ms';
+      const score = Number((91 + Math.random() * 8).toFixed(1));
+      const lat = Math.floor(8 + Math.random() * 6);
+      totalEvents += 950;
+      document.getElementById('kpiEvents').textContent = totalEvents.toLocaleString('pt-BR');
+      document.getElementById('kpiScore').textContent = score + '%';
+      document.getElementById('kpiLatency').textContent = lat + ' ms';
+      if (chartInstance) {
+        chartInstance.data.datasets[0].data.shift();
+        chartInstance.data.datasets[0].data.push(score);
+        chartInstance.update();
+      }
     }
+
+    function exportCsv() {
+      const rows = [['Pipeline', 'Prioridade', 'Score', 'Status'], ...records.map(r => [r.name, r.priority, r.score + '%', r.status])];
+      const csv = rows.map(r => r.join(',')).join('\\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'relatorio_preditivo.csv';
+      a.click();
+    }
+
+    renderTable();
+    initChart();
   </script>
 </body>
 </html>`;
@@ -696,33 +923,68 @@ export class GrowthPod implements DepartmentPod {
       (d) => `${d.department}/${d.artifactName}@v${d.version}`
     );
 
+    const growthSkill = DEPARTMENT_SKILL_PACKS.growth;
+
     const landingHtml = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8" />
-  <title>Landing Page de Lançamento — Pod Growth</title>
+  <title>Landing Page & Calculadora de ROI — Pod Growth</title>
   <style>
-    body { background: #070a12; color: #f8fafc; font-family: 'Inter', system-ui, sans-serif; padding: 32px 24px; text-align: center; }
-    .pill { display: inline-block; background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid #f59e0b; padding: 4px 12px; border-radius: 999px; font-size: 11px; font-weight: 800; margin-bottom: 14px; }
-    h1 { font-size: 28px; max-width: 560px; margin: 0 auto 12px; line-height: 1.25; }
-    p { color: #94a3b8; font-size: 14px; max-width: 480px; margin: 0 auto 22px; line-height: 1.5; }
-    .cta { background: #f59e0b; color: #090d16; border: none; padding: 12px 22px; border-radius: 8px; font-weight: 800; font-size: 14px; cursor: pointer; }
-    .metrics { display: flex; justify-content: center; gap: 20px; margin-top: 28px; }
-    .m-card { background: #0f172a; border: 1px solid #1e293b; padding: 14px 18px; border-radius: 10px; }
-    .m-card strong { display: block; font-size: 20px; color: #fbbf24; }
+    body { background: #070a12; color: #f8fafc; font-family: 'Inter', system-ui, sans-serif; padding: 28px 20px; text-align: center; }
+    .pill { display: inline-block; background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid #f59e0b; padding: 4px 12px; border-radius: 999px; font-size: 11px; font-weight: 800; margin-bottom: 12px; }
+    h1 { font-size: 24px; max-width: 560px; margin: 0 auto 10px; line-height: 1.25; }
+    p { color: #94a3b8; font-size: 13.5px; max-width: 480px; margin: 0 auto 20px; line-height: 1.5; }
+    .cta { background: #f59e0b; color: #090d16; border: none; padding: 11px 22px; border-radius: 8px; font-weight: 800; font-size: 13.5px; cursor: pointer; }
+    .roi-box { background: #0f172a; border: 1px solid #1e293b; border-radius: 12px; padding: 18px; max-width: 480px; margin: 22px auto; text-align: left; }
+    .roi-box h2 { font-size: 13px; color: #fbbf24; margin-bottom: 10px; text-transform: uppercase; }
+    .roi-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; font-size: 12.5px; }
+    input[type="range"] { width: 100%; accent-color: #f59e0b; margin-bottom: 14px; }
+    .metrics { display: flex; justify-content: center; gap: 14px; margin-top: 18px; flex-wrap: wrap; }
+    .m-card { background: #0f172a; border: 1px solid #1e293b; padding: 12px 16px; border-radius: 10px; min-width: 120px; }
+    .m-card strong { display: block; font-size: 19px; color: #fbbf24; }
     .m-card span { font-size: 11px; color: #94a3b8; }
   </style>
 </head>
 <body>
-  <span class="pill">🚀 GO-TO-MARKET • POD GROWTH</span>
+  <span class="pill">🚀 SKILL: ${growthSkill.skillName} v${growthSkill.version}</span>
   <h1>Ative sua Operação Preditiva em Menos de 3 Minutos</h1>
   <p>Zero configuração manual, onboarding self-service imediato e governança determinística de ponta a ponta.</p>
-  <button class="cta" onclick="alert('Lead capturado no funil de ativação Product-Led Growth!')">Começar Agora Gratuitamente →</button>
+  <button type="button" class="cta" onclick="alert('Lead capturado no funil de ativação Product-Led Growth!')">Começar Agora Gratuitamente →</button>
+
+  <div class="roi-box">
+    <h2>💰 Calculadora Interativa de ROI & Economia Anual</h2>
+    <div class="roi-row">
+      <span>Tamanho da Equipe / Analistas:</span>
+      <strong id="teamVal">15 pessoas</strong>
+    </div>
+    <input id="teamSlider" type="range" min="3" max="100" value="15" oninput="calcRoi()" />
+    <div class="roi-row">
+      <span>Horas economizadas / mês:</span>
+      <strong id="hoursSaved" style="color:#38bdf8;">240 h/mês</strong>
+    </div>
+    <div class="roi-row">
+      <span>Economia Anual Estimada:</span>
+      <strong id="moneySaved" style="color:#4ade80;font-size:16px;">R$ 216.000 / ano</strong>
+    </div>
+  </div>
+
   <div class="metrics">
     <div class="m-card"><strong>&gt; 65%</strong><span>Meta de Ativação D1</span></div>
     <div class="m-card"><strong>-40%</strong><span>Redução no CAC</span></div>
     <div class="m-card"><strong>&lt; 3 min</strong><span>Time-to-Value</span></div>
   </div>
+
+  <script>
+    function calcRoi() {
+      const team = Number(document.getElementById('teamSlider').value);
+      const hours = team * 16;
+      const annualSavings = hours * 75 * 12;
+      document.getElementById('teamVal').textContent = team + ' pessoas';
+      document.getElementById('hoursSaved').textContent = hours.toLocaleString('pt-BR') + ' h/mês';
+      document.getElementById('moneySaved').textContent = 'R$ ' + annualSavings.toLocaleString('pt-BR') + ' / ano';
+    }
+  </script>
 </body>
 </html>`;
 

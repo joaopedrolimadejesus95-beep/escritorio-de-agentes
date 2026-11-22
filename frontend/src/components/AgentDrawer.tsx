@@ -22,6 +22,50 @@ interface BuiltFileRef {
   fileType: 'html' | 'markdown' | 'json' | 'code';
 }
 
+const DEPARTMENT_SKILLS_SUMMARY: Record<
+  string,
+  { skillName: string; libraries: string[] }
+> = {
+  research: {
+    skillName: 'deep-market-and-architecture-intelligence v2.0',
+    libraries: [
+      'HackerNews Algolia API',
+      'Wikipedia REST API',
+      'GitHub Repo Radar',
+      'NPM Registry API',
+      'Chart.js 4.4 Radar',
+    ],
+  },
+  design: {
+    skillName: 'modern-ui-ux-design-system-architect v2.0',
+    libraries: [
+      'Lucide Icons',
+      'CSS @container Queries',
+      'Accessible Tablist (WCAG 1.4.1)',
+      'Native HTML5 <dialog>',
+      'Live Theme Switcher',
+    ],
+  },
+  engineering: {
+    skillName: 'fullstack-interactive-mvp-builder v2.0',
+    libraries: [
+      'Chart.js 4.4 Live Line',
+      'Responsive Sticky Tables',
+      'LocalStorage State Engine',
+      'CSV Exporter',
+      'Strict TypeScript Contracts',
+    ],
+  },
+  growth: {
+    skillName: 'plg-conversion-and-roi-simulator-engineer v2.0',
+    libraries: [
+      'Interactive ROI Calculator',
+      'PLG Funnel Simulator',
+      'Lucide Icons',
+    ],
+  },
+};
+
 export function AgentDrawer() {
   const selectedDepartment = useOfficeStore((s) => s.selectedDepartment);
   const selectDepartment = useOfficeStore((s) => s.selectDepartment);
@@ -203,6 +247,47 @@ export function AgentDrawer() {
           <p style={{ fontSize: '13px', color: '#e2e8f0', lineHeight: 1.45 }}>
             {agent.statusBubble ?? 'Aguardando próxima tarefa do DAG.'}
           </p>
+
+          {DEPARTMENT_SKILLS_SUMMARY[selectedDepartment] && (
+            <div
+              style={{
+                marginTop: '10px',
+                paddingTop: '10px',
+                borderTop: '1px solid #1e293b',
+              }}
+            >
+              <div
+                style={{
+                  fontSize: '10.5px',
+                  fontWeight: 800,
+                  color: deskConfig.accentColor,
+                  marginBottom: '6px',
+                }}
+              >
+                ⚡ SKILL ATIVA:{' '}
+                {DEPARTMENT_SKILLS_SUMMARY[selectedDepartment].skillName}
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px' }}>
+                {DEPARTMENT_SKILLS_SUMMARY[selectedDepartment].libraries.map(
+                  (lib, i) => (
+                    <span
+                      key={i}
+                      style={{
+                        fontSize: '10px',
+                        background: '#1e293b',
+                        color: '#cbd5e1',
+                        padding: '2px 7px',
+                        borderRadius: '4px',
+                        fontWeight: 600,
+                      }}
+                    >
+                      {lib}
+                    </span>
+                  )
+                )}
+              </div>
+            </div>
+          )}
         </section>
 
         {/* Quality Gate Human-in-the-Loop (Aprovação Fácil para o Usuário) */}
