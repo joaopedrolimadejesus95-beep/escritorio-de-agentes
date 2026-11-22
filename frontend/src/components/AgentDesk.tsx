@@ -8,6 +8,7 @@ import { useOfficeStore } from '../store/useOfficeStore.js';
 export interface DepartmentDeskConfig {
   department: DepartmentId;
   label: string;
+  roleSubtitle: string;
   position: [number, number, number];
   accentColor: string;
 }
@@ -15,32 +16,37 @@ export interface DepartmentDeskConfig {
 export const DEPARTMENT_DESKS: Record<DepartmentId, DepartmentDeskConfig> = {
   director: {
     department: 'director',
-    label: 'DIRETOR (DAG PLANNER)',
-    position: [0, 0, -5],
+    label: 'Diretor Executivo',
+    roleSubtitle: 'Orquestração & DAG Planner',
+    position: [0, 0, -6.5],
     accentColor: '#a855f7',
   },
   research: {
     department: 'research',
-    label: 'POD RESEARCH',
-    position: [-5, 0, -1],
+    label: 'Pesquisa de Mercado',
+    roleSubtitle: 'Concorrentes, Preços & Dores',
+    position: [-6.5, 0, -1.2],
     accentColor: '#38bdf8',
-  },
-  design: {
-    department: 'design',
-    label: 'POD DESIGN',
-    position: [5, 0, -1],
-    accentColor: '#ec4899',
   },
   engineering: {
     department: 'engineering',
-    label: 'POD ENGINEERING',
-    position: [-4, 0, 4],
+    label: 'Arquitetura & Dados',
+    roleSubtitle: 'Stack, Mermaid, SQL & APIs',
+    position: [6.5, 0, -1.2],
     accentColor: '#10b981',
+  },
+  design: {
+    department: 'design',
+    label: 'Design de Interface',
+    roleSubtitle: 'Design System & Telas HTML',
+    position: [-5, 0, 5.2],
+    accentColor: '#ec4899',
   },
   growth: {
     department: 'growth',
-    label: 'POD GROWTH',
-    position: [4, 0, 4],
+    label: 'Estratégia & Growth',
+    roleSubtitle: 'GTM, Preços & Aquisição',
+    position: [5, 0, 5.2],
     accentColor: '#f59e0b',
   },
 };
@@ -55,12 +61,12 @@ const VISUAL_STATE_MONITOR_COLORS: Record<AgentVisualState, string> = {
 };
 
 const VISUAL_STATE_BADGE_LABELS: Record<AgentVisualState, string> = {
-  idle: 'IDLE',
-  thinking: 'THINKING',
-  working: 'WORKING',
-  validating: 'VALIDATING',
-  awaiting_approval: 'QUALITY GATE',
-  error: 'ERROR',
+  idle: 'Disponível',
+  thinking: 'Analisando',
+  working: 'Produzindo',
+  validating: 'Validando',
+  awaiting_approval: 'Revisão',
+  error: 'Erro',
 };
 
 interface AgentDeskProps {
@@ -68,82 +74,107 @@ interface AgentDeskProps {
 }
 
 export function AgentDesk({ config }: AgentDeskProps) {
+  const rootGroupRef = useRef<THREE.Group>(null);
   const agentGroupRef = useRef<THREE.Group>(null);
   const headRef = useRef<THREE.Mesh>(null);
   const leftArmRef = useRef<THREE.Mesh>(null);
   const rightArmRef = useRef<THREE.Mesh>(null);
   const monitorScreenMatRef = useRef<THREE.MeshStandardMaterial>(null);
   const alertBeaconRef = useRef<THREE.Mesh>(null);
+  const hoverRingMatRef = useRef<THREE.MeshStandardMaterial>(null);
 
-  // Seletores leves para o overlay HTML e seleção de Drawer
   const agentState = useOfficeStore((s) => s.agents[config.department]);
   const selectedDepartment = useOfficeStore((s) => s.selectedDepartment);
+  const hoveredDepartment = useOfficeStore((s) => s.hoveredDepartment);
   const selectDepartment = useOfficeStore((s) => s.selectDepartment);
-  const isSelected = selectedDepartment === config.department;
+  const setHoveredDepartment = useOfficeStore((s) => s.setHoveredDepartment);
 
-  // Animação 60fps via useFrame lendo Zustand diretamente sem re-renderizar o React
+  const isSelected = selectedDepartment === config.department;
+  const isHovered = hoveredDepartment === config.department;
+
   useFrame(({ clock }) => {
     const t = clock.getElapsedTime();
-    const currentAgent = useOfficeStore.getState().agents[config.department];
+    const state = useOfficeStore.getState();
+    const currentAgent = state.agents[config.department];
     const vState = currentAgent?.visualState ?? 'idle';
+    const activeHover = state.hoveredDepartment === config.department;
+    const activeSel = state.selectedDepartment === config.department;
 
-    // 1. Animação do Corpo e Cabeça do Boneco Low-Poly
-    if (agentGroupRef.current && headRef.current && leftArmRef.current && rightArmRef.current) {
+    // Elevação sutil no hover para feedback tátil imediato
+    if (rootGroupRef.current) {
+      const targetScale = activeHover || activeSel ? 1.035 : 1.0;
+      rootGroupRef.current.scale.lerp(
+        new THREE.Vector3(targetScale, targetScale, targetScale),
+        0.15
+      );
+    }
+
+    if (hoverRingMatRef.current) {
+      const targetOpacity = activeSel ? 0.95 : activeHover ? 0.65 : 0.12;
+      hoverRingMatRef.current.opacity = THREE.MathUtils.lerp(
+        hoverRingMatRef.current.opacity,
+        targetOpacity,
+        0.18
+      );
+    }
+
+    // Animação do Boneco Low-Poly
+    if (
+      agentGroupRef.current &&
+      headRef.current &&
+      leftArmRef.current &&
+      rightArmRef.current
+    ) {
       if (vState === 'idle') {
-        agentGroupRef.current.position.y = 0.75 + Math.sin(t * 2) * 0.03;
-        headRef.current.rotation.y = Math.sin(t * 0.8) * 0.15;
+        agentGroupRef.current.position.y = 0.75 + Math.sin(t * 2) * 0.025;
+        headRef.current.rotation.y = Math.sin(t * 0.7) * 0.12;
         leftArmRef.current.rotation.x = -0.3;
         rightArmRef.current.rotation.x = -0.3;
       } else if (vState === 'thinking') {
-        agentGroupRef.current.position.y = 0.78 + Math.sin(t * 4) * 0.05;
-        headRef.current.rotation.y = Math.sin(t * 3) * 0.35;
-        leftArmRef.current.rotation.x = -0.7 + Math.sin(t * 4) * 0.15;
-        rightArmRef.current.rotation.x = -1.1;
+        agentGroupRef.current.position.y = 0.78 + Math.sin(t * 4) * 0.04;
+        headRef.current.rotation.y = Math.sin(t * 2.5) * 0.3;
+        leftArmRef.current.rotation.x = -0.7 + Math.sin(t * 4) * 0.12;
+        rightArmRef.current.rotation.x = -1.05;
       } else if (vState === 'working') {
-        // Digitando rápido no teclado
-        agentGroupRef.current.position.y = 0.76 + Math.abs(Math.sin(t * 10)) * 0.04;
-        headRef.current.rotation.y = Math.sin(t * 6) * 0.08;
-        leftArmRef.current.rotation.x = -0.9 + Math.sin(t * 18) * 0.25;
-        rightArmRef.current.rotation.x = -0.9 + Math.cos(t * 18) * 0.25;
+        agentGroupRef.current.position.y =
+          0.76 + Math.abs(Math.sin(t * 9)) * 0.035;
+        headRef.current.rotation.y = Math.sin(t * 5) * 0.08;
+        leftArmRef.current.rotation.x = -0.9 + Math.sin(t * 16) * 0.22;
+        rightArmRef.current.rotation.x = -0.9 + Math.cos(t * 16) * 0.22;
       } else if (vState === 'validating') {
-        // Inspecionando com precisão
-        agentGroupRef.current.position.y = 0.8 + Math.sin(t * 6) * 0.04;
-        headRef.current.rotation.y = Math.sin(t * 5) * 0.25;
+        agentGroupRef.current.position.y = 0.8 + Math.sin(t * 5) * 0.035;
+        headRef.current.rotation.y = Math.sin(t * 4) * 0.22;
         leftArmRef.current.rotation.x = -0.8;
         rightArmRef.current.rotation.x = -0.8;
       } else if (vState === 'awaiting_approval') {
-        // Acenando / Alerta de Quality Gate
-        agentGroupRef.current.position.y = 0.82 + Math.abs(Math.sin(t * 5)) * 0.12;
+        agentGroupRef.current.position.y =
+          0.82 + Math.abs(Math.sin(t * 4.5)) * 0.1;
         headRef.current.rotation.y = 0;
-        leftArmRef.current.rotation.x = -2.4 + Math.sin(t * 8) * 0.3;
-        rightArmRef.current.rotation.x = -2.4 - Math.sin(t * 8) * 0.3;
+        leftArmRef.current.rotation.x = -2.3 + Math.sin(t * 7) * 0.25;
+        rightArmRef.current.rotation.x = -2.3 - Math.sin(t * 7) * 0.25;
       } else if (vState === 'error') {
-        // Shake de erro
         agentGroupRef.current.position.y = 0.72;
-        headRef.current.rotation.y = Math.sin(t * 25) * 0.2;
+        headRef.current.rotation.y = Math.sin(t * 20) * 0.18;
         leftArmRef.current.rotation.x = -0.2;
         rightArmRef.current.rotation.x = -0.2;
       }
     }
 
-    // 2. Brilho Emissivo do Monitor conforme o AgentVisualState
     if (monitorScreenMatRef.current) {
       const targetHex = VISUAL_STATE_MONITOR_COLORS[vState];
       monitorScreenMatRef.current.color.set(targetHex);
       monitorScreenMatRef.current.emissive.set(targetHex);
-      const pulse =
+      monitorScreenMatRef.current.emissiveIntensity =
         vState === 'idle'
           ? 0.25
           : vState === 'awaiting_approval' || vState === 'error'
-            ? 1.1 + Math.sin(t * 8) * 0.5
-            : 0.85 + Math.sin(t * 5) * 0.25;
-      monitorScreenMatRef.current.emissiveIntensity = pulse;
+            ? 1.15 + Math.sin(t * 7) * 0.45
+            : 0.85 + Math.sin(t * 4.5) * 0.22;
     }
 
-    // 3. Giro do Beacon de Quality Gate / Erro acima do boneco
     if (alertBeaconRef.current) {
-      alertBeaconRef.current.rotation.y = t * 3;
-      alertBeaconRef.current.position.y = 2.45 + Math.sin(t * 5) * 0.08;
+      alertBeaconRef.current.rotation.y = t * 2.5;
+      alertBeaconRef.current.position.y = 2.42 + Math.sin(t * 4) * 0.07;
     }
   });
 
@@ -151,79 +182,89 @@ export function AgentDesk({ config }: AgentDeskProps) {
 
   return (
     <group
+      ref={rootGroupRef}
       position={config.position}
       onClick={(e) => {
         e.stopPropagation();
         selectDepartment(config.department);
       }}
-      onPointerOver={() => {
+      onPointerOver={(e) => {
+        e.stopPropagation();
+        setHoveredDepartment(config.department);
         document.body.style.cursor = 'pointer';
       }}
-      onPointerOut={() => {
+      onPointerOut={(e) => {
+        e.stopPropagation();
+        if (useOfficeStore.getState().hoveredDepartment === config.department) {
+          setHoveredDepartment(null);
+        }
         document.body.style.cursor = 'default';
       }}
     >
-      {/* Tapete / Plataforma de Identificação do Departamento */}
-      <mesh position={[0, 0.02, 0]} receiveShadow>
-        <boxGeometry args={[3.4, 0.04, 2.8]} />
+      {/* Anel de Destaque no Piso (Hover / Seleção) */}
+      <mesh position={[0, 0.015, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[2.15, 2.32, 48]} />
         <meshStandardMaterial
-          color={isSelected ? config.accentColor : '#1e293b'}
-          roughness={0.8}
+          ref={hoverRingMatRef}
+          color={config.accentColor}
+          emissive={config.accentColor}
+          emissiveIntensity={1.2}
+          transparent
+          opacity={0.12}
         />
       </mesh>
 
-      {/* Borda Luminosa do Pod */}
-      <mesh position={[0, 0.045, 1.35]}>
-        <boxGeometry args={[3.4, 0.03, 0.08]} />
+      {/* Plataforma da Estação */}
+      <RoundedBox args={[3.5, 0.08, 2.9]} radius={0.04} position={[0, 0.04, 0]} receiveShadow>
+        <meshStandardMaterial
+          color={isSelected ? '#1e293b' : isHovered ? '#172033' : '#111827'}
+          roughness={0.75}
+        />
+      </RoundedBox>
+
+      {/* Friso de Identificação */}
+      <mesh position={[0, 0.085, 1.4]}>
+        <boxGeometry args={[3.3, 0.025, 0.06]} />
         <meshStandardMaterial
           color={config.accentColor}
           emissive={config.accentColor}
-          emissiveIntensity={isSelected ? 1.4 : 0.6}
+          emissiveIntensity={isSelected || isHovered ? 1.6 : 0.7}
         />
       </mesh>
 
-      {/* Tampo da Mesa */}
+      {/* Mesa */}
       <RoundedBox
-        args={[2.4, 0.12, 1.2]}
+        args={[2.4, 0.11, 1.15]}
         radius={0.04}
         position={[0, 0.78, 0.25]}
         castShadow
         receiveShadow
       >
-        <meshStandardMaterial color="#334155" roughness={0.5} metalness={0.2} />
+        <meshStandardMaterial color="#273244" roughness={0.55} metalness={0.18} />
       </RoundedBox>
 
       {/* Pés da Mesa */}
       {[
-        [-1.05, 0.39, -0.25],
-        [1.05, 0.39, -0.25],
-        [-1.05, 0.39, 0.75],
-        [1.05, 0.39, 0.75],
+        [-1.05, 0.39, -0.22],
+        [1.05, 0.39, -0.22],
+        [-1.05, 0.39, 0.72],
+        [1.05, 0.39, 0.72],
       ].map((legPos, idx) => (
-        <mesh
-          key={idx}
-          position={legPos as [number, number, number]}
-          castShadow
-        >
-          <cylinderGeometry args={[0.05, 0.05, 0.76, 12]} />
-          <meshStandardMaterial color="#0f172a" metalness={0.6} roughness={0.3} />
+        <mesh key={idx} position={legPos as [number, number, number]} castShadow>
+          <cylinderGeometry args={[0.045, 0.045, 0.76, 12]} />
+          <meshStandardMaterial color="#0f172a" metalness={0.6} roughness={0.35} />
         </mesh>
       ))}
 
-      {/* Monitor Emissivo (Voltado para o Agente + Visível na Câmera Isométrica) */}
+      {/* Monitor */}
       <group position={[0, 1.12, 0.45]}>
-        {/* Base do Monitor */}
         <mesh position={[0, -0.22, 0]} castShadow>
           <cylinderGeometry args={[0.04, 0.14, 0.2, 12]} />
           <meshStandardMaterial color="#0f172a" />
         </mesh>
-
-        {/* Chassi do Monitor */}
         <RoundedBox args={[1.05, 0.62, 0.08]} radius={0.03} castShadow>
           <meshStandardMaterial color="#0f172a" roughness={0.4} />
         </RoundedBox>
-
-        {/* Tela Emissiva Dupla Face (Brilha conforme o AgentVisualState) */}
         <mesh position={[0, 0, -0.045]}>
           <planeGeometry args={[0.95, 0.52]} />
           <meshStandardMaterial
@@ -244,9 +285,8 @@ export function AgentDesk({ config }: AgentDeskProps) {
         </mesh>
       </group>
 
-      {/* Boneco Geométrico Low-Poly do Agente */}
+      {/* Boneco Geométrico Low-Poly */}
       <group ref={agentGroupRef} position={[0, 0.75, -0.55]}>
-        {/* Torso */}
         <RoundedBox
           args={[0.55, 0.7, 0.35]}
           radius={0.12}
@@ -256,13 +296,11 @@ export function AgentDesk({ config }: AgentDeskProps) {
           <meshStandardMaterial color={config.accentColor} roughness={0.35} />
         </RoundedBox>
 
-        {/* Cabeça */}
         <mesh ref={headRef} position={[0, 0.82, 0]} castShadow>
           <sphereGeometry args={[0.26, 20, 20]} />
-          <meshStandardMaterial color="#f8fafc" roughness={0.3} />
-          {/* Visor Digital do Agente */}
+          <meshStandardMaterial color="#f1f5f9" roughness={0.35} />
           <mesh position={[0, 0.03, 0.21]}>
-            <boxGeometry args={[0.28, 0.1, 0.06]} />
+            <boxGeometry args={[0.28, 0.09, 0.06]} />
             <meshStandardMaterial
               color={monitorColor}
               emissive={monitorColor}
@@ -271,7 +309,6 @@ export function AgentDesk({ config }: AgentDeskProps) {
           </mesh>
         </mesh>
 
-        {/* Braço Esquerdo */}
         <mesh
           ref={leftArmRef}
           position={[-0.38, 0.32, 0.15]}
@@ -282,7 +319,6 @@ export function AgentDesk({ config }: AgentDeskProps) {
           <meshStandardMaterial color={config.accentColor} />
         </mesh>
 
-        {/* Braço Direito */}
         <mesh
           ref={rightArmRef}
           position={[0.38, 0.32, 0.15]}
@@ -294,11 +330,11 @@ export function AgentDesk({ config }: AgentDeskProps) {
         </mesh>
       </group>
 
-      {/* Diamante 3D de Alerta em Quality Gate ou Erro */}
+      {/* Beacon 3D de Revisão ou Erro */}
       {(agentState.visualState === 'awaiting_approval' ||
         agentState.visualState === 'error') && (
-        <mesh ref={alertBeaconRef} position={[0, 2.45, -0.55]}>
-          <octahedronGeometry args={[0.22, 0]} />
+        <mesh ref={alertBeaconRef} position={[0, 2.42, -0.55]}>
+          <octahedronGeometry args={[0.2, 0]} />
           <meshStandardMaterial
             color={
               agentState.visualState === 'awaiting_approval'
@@ -310,56 +346,46 @@ export function AgentDesk({ config }: AgentDeskProps) {
                 ? '#f59e0b'
                 : '#ef4444'
             }
-            emissiveIntensity={1.5}
+            emissiveIntensity={1.4}
           />
         </mesh>
       )}
 
-      {/* Placa de Identificação na Borda da Estação */}
-      <Html
-        position={[0, 0.15, 1.35]}
-        center
-        zIndexRange={[5, 0]}
-      >
+      {/* Card Sóbrio Suspenso (Clicável e com Hover Sincronizado) */}
+      <Html position={[0, 2.75, -0.2]} center zIndexRange={[10, 0]}>
         <div
-          style={{
-            background: 'rgba(15, 23, 42, 0.9)',
-            border: `1px solid ${config.accentColor}`,
-            color: '#e2e8f0',
-            fontSize: '10px',
-            fontWeight: 800,
-            letterSpacing: '0.06em',
-            padding: '2px 8px',
-            borderRadius: '4px',
-            whiteSpace: 'nowrap',
-            pointerEvents: 'none',
+          onClick={(e) => {
+            e.stopPropagation();
+            selectDepartment(config.department);
           }}
-        >
-          {config.label}
-        </div>
-      </Html>
-
-      {/* Balão HTML Suspenso do Boneco */}
-      <Html
-        position={[0, 2.55, -0.35]}
-        center
-        zIndexRange={[10, 0]}
-      >
-        <div
-          onClick={() => selectDepartment(config.department)}
+          onMouseEnter={() => setHoveredDepartment(config.department)}
+          onMouseLeave={() => {
+            if (
+              useOfficeStore.getState().hoveredDepartment === config.department
+            ) {
+              setHoveredDepartment(null);
+            }
+          }}
           style={{
             cursor: 'pointer',
-            background: 'rgba(15, 23, 42, 0.92)',
-            border: `1.5px solid ${monitorColor}`,
+            background: isSelected
+              ? 'rgba(15, 23, 42, 0.96)'
+              : 'rgba(9, 13, 20, 0.92)',
+            border: `1px solid ${
+              isSelected || isHovered ? config.accentColor : '#1e293b'
+            }`,
             borderRadius: '10px',
-            padding: '6px 10px',
-            minWidth: '150px',
+            padding: '7px 11px',
+            minWidth: '175px',
             maxWidth: '220px',
-            boxShadow: '0 8px 20px rgba(0,0,0,0.45)',
-            backdropFilter: 'blur(6px)',
+            boxShadow:
+              isSelected || isHovered
+                ? `0 8px 24px rgba(0,0,0,0.55), 0 0 0 1px ${config.accentColor}40`
+                : '0 6px 16px rgba(0,0,0,0.45)',
             color: '#f8fafc',
             fontSize: '11px',
             userSelect: 'none',
+            transition: 'border-color 0.15s, box-shadow 0.15s',
           }}
         >
           <div
@@ -367,52 +393,55 @@ export function AgentDesk({ config }: AgentDeskProps) {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              gap: '6px',
+              gap: '8px',
               marginBottom: agentState.statusBubble ? '4px' : '0',
             }}
           >
             <span
               style={{
                 fontWeight: 700,
-                color: config.accentColor,
-                letterSpacing: '0.04em',
+                color: '#f8fafc',
+                fontSize: '11.5px',
+                whiteSpace: 'nowrap',
               }}
             >
-              {config.department.toUpperCase()}
+              {config.label}
             </span>
             <span
               style={{
-                background: monitorColor,
-                color: '#090d16',
-                fontWeight: 800,
-                fontSize: '9px',
-                padding: '2px 5px',
-                borderRadius: '4px',
+                background: `${monitorColor}25`,
+                border: `1px solid ${monitorColor}`,
+                color:
+                  agentState.visualState === 'idle' ? '#94a3b8' : monitorColor,
+                fontWeight: 700,
+                fontSize: '9.5px',
+                padding: '1px 6px',
+                borderRadius: '999px',
+                whiteSpace: 'nowrap',
               }}
             >
               {VISUAL_STATE_BADGE_LABELS[agentState.visualState]}
             </span>
           </div>
+
           {agentState.activeTool && (
             <div
               style={{
-                background: 'rgba(56, 189, 248, 0.16)',
-                border: '1px solid #38bdf8',
-                color: '#7dd3fc',
                 fontSize: '10px',
-                fontWeight: 700,
-                padding: '2px 6px',
-                borderRadius: '4px',
-                marginBottom: '4px',
+                color: '#7dd3fc',
+                fontWeight: 600,
+                marginBottom: '2px',
               }}
             >
-              🌐 Tool: {agentState.activeTool}
+              Ferramenta: {agentState.activeTool}
             </div>
           )}
+
           {agentState.statusBubble && (
             <div
               style={{
-                color: '#cbd5e1',
+                color: '#94a3b8',
+                fontSize: '10.5px',
                 lineHeight: 1.35,
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',

@@ -1,7 +1,8 @@
-import { useRef } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
+import { useEffect, useRef } from 'react';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Grid, Html, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
+import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import {
   AgentDesk,
   DEPARTMENT_DESKS,
@@ -22,10 +23,9 @@ function HandoffCourierOrb({ handoff }: { handoff: ActiveHandoffAnimation }) {
     const elapsed = performance.now() - handoff.startedAt;
     const progress = Math.min(1, Math.max(0, elapsed / handoff.durationMs));
 
-    // Interpolação parabólica suave entre a mesa de origem e a mesa de destino
     const x = THREE.MathUtils.lerp(fromPos[0], toPos[0], progress);
     const z = THREE.MathUtils.lerp(fromPos[2], toPos[2], progress);
-    const arcHeight = Math.sin(progress * Math.PI) * 2.4;
+    const arcHeight = Math.sin(progress * Math.PI) * 2.5;
     const y = 1.2 + arcHeight;
 
     meshRef.current.position.set(x, y, z);
@@ -35,26 +35,27 @@ function HandoffCourierOrb({ handoff }: { handoff: ActiveHandoffAnimation }) {
 
   return (
     <mesh ref={meshRef} castShadow>
-      <dodecahedronGeometry args={[0.28, 0]} />
+      <dodecahedronGeometry args={[0.26, 0]} />
       <meshStandardMaterial
         color="#38bdf8"
         emissive="#38bdf8"
-        emissiveIntensity={1.6}
+        emissiveIntensity={1.5}
       />
       <Html center>
         <div
           style={{
-            background: 'rgba(14, 165, 233, 0.92)',
-            color: '#082f49',
-            fontWeight: 800,
+            background: 'rgba(9, 13, 20, 0.92)',
+            border: '1px solid #38bdf8',
+            color: '#e0f2fe',
+            fontWeight: 600,
             fontSize: '10px',
-            padding: '3px 7px',
+            padding: '3px 8px',
             borderRadius: '999px',
             whiteSpace: 'nowrap',
-            boxShadow: '0 4px 12px rgba(56, 189, 248, 0.5)',
+            boxShadow: '0 4px 14px rgba(56, 189, 248, 0.35)',
           }}
         >
-          📦 {handoff.artifactName}
+          Handoff: {handoff.artifactName}
         </div>
       </Html>
     </mesh>
@@ -97,15 +98,84 @@ function DagFloorConnections() {
           return (
             <mesh
               key={desk.department}
-              position={[midX, 0.015, midZ]}
+              position={[midX, 0.012, midZ]}
               rotation={[0, angleY, 0]}
             >
-              <boxGeometry args={[0.06, 0.01, length]} />
+              <boxGeometry args={[0.05, 0.008, length]} />
               <meshStandardMaterial color="#1e293b" />
             </mesh>
           );
         })}
     </group>
+  );
+}
+
+/**
+ * Controlador suave de câmera isométrica:
+ * Ao clicar em um agente, desloca suavemente o foco do OrbitControls para a mesa selecionada,
+ * sem travar o movimento manual do usuário.
+ */
+function SmoothCameraRig() {
+  const controlsRef = useRef<OrbitControlsImpl>(null);
+  const selectedDepartment = useOfficeStore((s) => s.selectedDepartment);
+  const targetVecRef = useRef(new THREE.Vector3(0, 0, 0));
+  const isTransitioningRef = useRef(false);
+  const { camera } = useThree();
+
+  useEffect(() => {
+    if (selectedDepartment) {
+      const pos = DEPARTMENT_DESKS[selectedDepartment].position;
+      // No ângulo isométrico (+X, +Y, +Z), +X/-Z desloca o alvo para a direita da tela,
+      // centralizando o agente selecionado na área livre à esquerda do Drawer lateral.
+      targetVecRef.current.set(pos[0] + 4.0, 0.5, pos[2] - 4.0);
+    } else {
+      targetVecRef.current.set(0, 0, 0);
+    }
+    isTransitioningRef.current = true;
+  }, [selectedDepartment]);
+
+  useFrame((_, delta) => {
+    const controls = controlsRef.current;
+    if (!controls || !isTransitioningRef.current) return;
+
+    const alpha = 1 - Math.exp(-delta * 6);
+    controls.target.lerp(targetVecRef.current, alpha);
+    controls.update();
+
+    if (controls.target.distanceTo(targetVecRef.current) < 0.04) {
+      isTransitioningRef.current = false;
+    }
+
+    // Garante que o zoom permaneça suave no foco
+    if (camera instanceof THREE.OrthographicCamera) {
+      const targetZoom = selectedDepartment ? 44 : 36;
+      if (Math.abs(camera.zoom - targetZoom) > 0.1) {
+        camera.zoom = THREE.MathUtils.lerp(camera.zoom, targetZoom, alpha * 0.7);
+        camera.updateProjectionMatrix();
+      }
+    }
+  });
+
+  return (
+    <OrbitControls
+      ref={controlsRef}
+      makeDefault
+      enableDamping
+      dampingFactor={0.08}
+      enableRotate
+      enablePan
+      enableZoom
+      minZoom={22}
+      maxZoom={75}
+      minPolarAngle={Math.PI / 5}
+      maxPolarAngle={Math.PI / 2.5}
+      minAzimuthAngle={-Math.PI / 4}
+      maxAzimuthAngle={Math.PI / 2}
+      onStart={() => {
+        // Se o usuário começar a arrastar/orbitar, cancela a transição automática imediatamente
+        isTransitioningRef.current = false;
+      }}
+    />
   );
 }
 
@@ -118,76 +188,58 @@ export function OfficeScene() {
       orthographic
       shadows
       camera={{
-        position: [16, 16, 16],
-        zoom: 42,
+        position: [18, 16, 18],
+        zoom: 36,
         near: -100,
         far: 200,
       }}
       onPointerMissed={() => selectDepartment(null)}
     >
-      <color attach="background" args={['#0b0f19']} />
+      <color attach="background" args={['#070a10']} />
 
-      {/* Iluminação Isométrica */}
-      <ambientLight intensity={0.65} />
+      <ambientLight intensity={0.7} />
       <directionalLight
         castShadow
-        position={[12, 22, 10]}
-        intensity={1.35}
+        position={[14, 24, 12]}
+        intensity={1.3}
         shadow-mapSize-width={2048}
         shadow-mapSize-height={2048}
-        shadow-camera-left={-15}
-        shadow-camera-right={15}
-        shadow-camera-top={15}
-        shadow-camera-bottom={-15}
+        shadow-camera-left={-18}
+        shadow-camera-right={18}
+        shadow-camera-top={18}
+        shadow-camera-bottom={-18}
       />
-      <pointLight position={[0, 6, 0]} intensity={0.4} color="#38bdf8" />
+      <pointLight position={[0, 8, 0]} intensity={0.35} color="#38bdf8" />
 
-      {/* Piso do Escritório Virtual */}
       <mesh
         rotation={[-Math.PI / 2, 0, 0]}
         position={[0, 0, 0]}
         receiveShadow
       >
-        <planeGeometry args={[26, 22]} />
-        <meshStandardMaterial color="#0f172a" roughness={0.9} />
+        <planeGeometry args={[32, 26]} />
+        <meshStandardMaterial color="#0b101b" roughness={0.92} />
       </mesh>
 
       <Grid
         position={[0, 0.01, 0]}
-        args={[26, 22]}
+        args={[32, 26]}
         cellSize={1}
-        cellThickness={0.6}
-        cellColor="#1e293b"
+        cellThickness={0.5}
+        cellColor="#151e2e"
         sectionSize={4}
-        sectionThickness={1.2}
-        sectionColor="#334155"
-        fadeDistance={35}
+        sectionThickness={1}
+        sectionColor="#1e293b"
+        fadeDistance={40}
       />
 
-      {/* Linhas de Conexão no Piso */}
       <DagFloorConnections />
 
-      {/* Estações de Trabalho dos Departamentos */}
       {desks.map((config) => (
         <AgentDesk key={config.department} config={config} />
       ))}
 
-      {/* Animação de Pacotes de Artefatos (ARTIFACT_HANDOFF) */}
       <HandoffManager />
-
-      {/* Controles Isométricos Restritos */}
-      <OrbitControls
-        makeDefault
-        enableRotate={true}
-        enablePan={true}
-        enableZoom={true}
-        minZoom={24}
-        maxZoom={85}
-        minPolarAngle={Math.PI / 5}
-        maxPolarAngle={Math.PI / 2.6}
-        minAzimuthAngle={0}
-        maxAzimuthAngle={Math.PI / 2}
-      />
+      <SmoothCameraRig />
     </Canvas>
   );
 }

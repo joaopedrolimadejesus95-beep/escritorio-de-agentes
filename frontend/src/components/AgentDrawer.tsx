@@ -1,70 +1,22 @@
 import { useState } from 'react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  ChevronRight,
+  Maximize2,
+  Minimize2,
+  RotateCcw,
+  Terminal,
+  X,
+} from 'lucide-react';
 import { useOfficeStore } from '../store/useOfficeStore.js';
 import { DEPARTMENT_DESKS } from './AgentDesk.js';
-
-interface HumanReportSection {
-  title: string;
-  summary: string;
-  items?: string[];
-}
-
-interface HumanSummaryData {
-  headline?: string;
-  keyDecisions?: string[];
-  sections?: HumanReportSection[];
-  approvalChecklist?: string[];
-}
-
-interface BuiltFileRef {
-  label: string;
-  relativePath: string;
-  previewUrl: string;
-  fileType: 'html' | 'markdown' | 'json' | 'code';
-}
-
-const DEPARTMENT_SKILLS_SUMMARY: Record<
-  string,
-  { skillName: string; libraries: string[] }
-> = {
-  research: {
-    skillName: 'deep-market-and-architecture-intelligence v2.0',
-    libraries: [
-      'HackerNews Algolia API',
-      'Wikipedia REST API',
-      'GitHub Repo Radar',
-      'NPM Registry API',
-      'Chart.js 4.4 Radar',
-    ],
-  },
-  design: {
-    skillName: 'modern-ui-ux-design-system-architect v2.0',
-    libraries: [
-      'Lucide Icons',
-      'CSS @container Queries',
-      'Accessible Tablist (WCAG 1.4.1)',
-      'Native HTML5 <dialog>',
-      'Live Theme Switcher',
-    ],
-  },
-  engineering: {
-    skillName: 'fullstack-interactive-mvp-builder v2.0',
-    libraries: [
-      'Chart.js 4.4 Live Line',
-      'Responsive Sticky Tables',
-      'LocalStorage State Engine',
-      'CSV Exporter',
-      'Strict TypeScript Contracts',
-    ],
-  },
-  growth: {
-    skillName: 'plg-conversion-and-roi-simulator-engineer v2.0',
-    libraries: [
-      'Interactive ROI Calculator',
-      'PLG Funnel Simulator',
-      'Lucide Icons',
-    ],
-  },
-};
+import {
+  DesignRenderer,
+  EngineeringRenderer,
+  GrowthRenderer,
+  ResearchRenderer,
+} from './renderers/DepartmentRenderers.js';
 
 export function AgentDrawer() {
   const selectedDepartment = useOfficeStore((s) => s.selectedDepartment);
@@ -78,9 +30,11 @@ export function AgentDrawer() {
   const [feedback, setFeedback] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'executive' | 'preview' | 'json'>(
-    'executive'
+  const [expanded, setExpanded] = useState(false);
+  const [drawerTab, setDrawerTab] = useState<'deliverable' | 'tools' | 'tasks'>(
+    'deliverable'
   );
+  const [selectedArtifactIdx, setSelectedArtifactIdx] = useState(0);
 
   if (!selectedDepartment) {
     return null;
@@ -94,18 +48,12 @@ export function AgentDrawer() {
   const departmentArtifacts = artifacts.filter(
     (a) => a.department === selectedDepartment
   );
-  const latestArtifact = departmentArtifacts[0] ?? null;
+  const activeArtifact =
+    departmentArtifacts[selectedArtifactIdx] ?? departmentArtifacts[0] ?? null;
 
   const awaitingTask = departmentTasks.find(
     (t) => t.status === 'awaiting_approval'
   );
-
-  const humanSummary = (latestArtifact?.content?.humanSummary ??
-    null) as HumanSummaryData | null;
-  const builtFiles = ((latestArtifact?.content?.builtFiles as
-    | BuiltFileRef[]
-    | undefined) ?? []);
-  const htmlPreviewFile = builtFiles.find((f) => f.fileType === 'html');
 
   const handleApprove = async (taskId: string) => {
     setSubmitting(true);
@@ -123,7 +71,7 @@ export function AgentDrawer() {
   const handleReject = async (taskId: string) => {
     if (feedback.trim().length < 3) {
       setActionError(
-        'Escreva o que você quer mudar (mínimo 3 caracteres) para o agente ajustar na nova versão.'
+        'Descreva objetivamente o ajuste desejado (mínimo 3 caracteres).'
       );
       return;
     }
@@ -145,255 +93,247 @@ export function AgentDrawer() {
         position: 'fixed',
         top: 0,
         right: 0,
-        width: '540px',
-        maxWidth: '95vw',
+        width: expanded ? 'min(92vw, 960px)' : 'min(92vw, 680px)',
         height: '100vh',
-        background: 'rgba(11, 15, 25, 0.97)',
-        borderLeft: `2px solid ${deskConfig.accentColor}`,
-        boxShadow: '-16px 0 40px rgba(0,0,0,0.75)',
-        backdropFilter: 'blur(14px)',
+        background: '#090d14',
+        borderLeft: '1px solid #1e293b',
+        boxShadow: '-20px 0 50px rgba(0, 0, 0, 0.7)',
         display: 'flex',
         flexDirection: 'column',
-        zIndex: 50,
+        zIndex: 60,
         color: '#f8fafc',
+        transition: 'width 0.22s ease',
       }}
     >
-      {/* Header do Drawer */}
+      {/* Header Sóbrio */}
       <div
         style={{
-          padding: '18px 22px',
+          padding: '18px 24px',
           borderBottom: '1px solid #1e293b',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
+          background: '#0b101b',
         }}
       >
-        <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <span
+            style={{
+              width: '10px',
+              height: '28px',
+              borderRadius: '4px',
+              background: deskConfig.accentColor,
+            }}
+          />
+          <div>
+            <div
+              style={{
+                fontSize: '11px',
+                fontWeight: 700,
+                color: '#94a3b8',
+                textTransform: 'uppercase',
+                letterSpacing: '0.06em',
+              }}
+            >
+              {deskConfig.roleSubtitle}
+            </div>
+            <h2 style={{ fontSize: '18px', fontWeight: 700, color: '#f8fafc' }}>
+              {deskConfig.label}
+            </h2>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <span
             style={{
               fontSize: '11px',
-              fontWeight: 800,
+              fontWeight: 600,
+              padding: '4px 10px',
+              borderRadius: '999px',
+              background: '#111827',
+              border: '1px solid #1e293b',
               color: deskConfig.accentColor,
-              letterSpacing: '0.08em',
             }}
           >
-            CENTRAL DE REVISÃO & ENTREGAS DO AGENTE
+            {agent.visualState.replace('_', ' ').toUpperCase()}
           </span>
-          <h2 style={{ fontSize: '19px', fontWeight: 800, marginTop: '2px' }}>
-            {deskConfig.label}
-          </h2>
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            title={expanded ? 'Largura padrão' : 'Expandir painel'}
+            style={iconBtnStyle}
+          >
+            {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+          </button>
+          <button
+            type="button"
+            onClick={() => selectDepartment(null)}
+            title="Fechar painel"
+            style={iconBtnStyle}
+          >
+            <X size={16} />
+          </button>
         </div>
-
-        <button
-          onClick={() => selectDepartment(null)}
-          style={{
-            background: '#1e293b',
-            border: '1px solid #334155',
-            color: '#cbd5e1',
-            borderRadius: '8px',
-            padding: '7px 12px',
-            cursor: 'pointer',
-            fontWeight: 700,
-          }}
-        >
-          ✕ Fechar
-        </button>
       </div>
 
-      {/* Corpo Rolável */}
+      {/* Sub-barra de Navegação do Drawer */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '0 24px',
+          borderBottom: '1px solid #1e293b',
+          background: '#090d14',
+        }}
+      >
+        <div style={{ display: 'flex', gap: '20px' }}>
+          {[
+            { id: 'deliverable', label: 'Entrega & Análise' },
+            {
+              id: 'tools',
+              label: `Atividade & Ferramentas (${agent.recentTools?.length ?? 0})`,
+            },
+            {
+              id: 'tasks',
+              label: `Tarefas DAG (${departmentTasks.length})`,
+            },
+          ].map((tab) => {
+            const active = drawerTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setDrawerTab(tab.id as any)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  borderBottom: active
+                    ? `2px solid ${deskConfig.accentColor}`
+                    : '2px solid transparent',
+                  padding: '12px 2px',
+                  fontSize: '12.5px',
+                  fontWeight: active ? 600 : 500,
+                  color: active ? '#f8fafc' : '#94a3b8',
+                  cursor: 'pointer',
+                }}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Seletor de Versão do Artefato (v1, v2...) */}
+        {departmentArtifacts.length > 1 && drawerTab === 'deliverable' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '11px', color: '#64748b' }}>Versão:</span>
+            {departmentArtifacts.map((art, idx) => (
+              <button
+                key={art.id}
+                type="button"
+                onClick={() => setSelectedArtifactIdx(idx)}
+                style={{
+                  background:
+                    idx === selectedArtifactIdx ? '#1e293b' : 'transparent',
+                  color: idx === selectedArtifactIdx ? '#f8fafc' : '#64748b',
+                  border: '1px solid #1e293b',
+                  borderRadius: '6px',
+                  padding: '3px 8px',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                v{art.version}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Área Principal Rolável */}
       <div
         style={{
           flex: 1,
           overflowY: 'auto',
-          padding: '18px 22px',
+          padding: '22px 24px',
           display: 'flex',
           flexDirection: 'column',
-          gap: '18px',
+          gap: '20px',
         }}
       >
-        {/* Status Atual do Boneco */}
-        <section
-          style={{
-            background: '#0f172a',
-            border: '1px solid #1e293b',
-            borderRadius: '10px',
-            padding: '14px',
-          }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: '6px',
-            }}
-          >
-            <span style={{ fontSize: '12px', color: '#94a3b8', fontWeight: 600 }}>
-              Status Atual do Agente
-            </span>
-            <span
-              style={{
-                fontSize: '11px',
-                fontWeight: 800,
-                padding: '3px 9px',
-                borderRadius: '999px',
-                background: '#1e293b',
-                color: deskConfig.accentColor,
-              }}
-            >
-              {agent.visualState.toUpperCase()}
-            </span>
-          </div>
-          <p style={{ fontSize: '13px', color: '#e2e8f0', lineHeight: 1.45 }}>
-            {agent.statusBubble ?? 'Aguardando próxima tarefa do DAG.'}
-          </p>
-
-          {DEPARTMENT_SKILLS_SUMMARY[selectedDepartment] && (
-            <div
-              style={{
-                marginTop: '10px',
-                paddingTop: '10px',
-                borderTop: '1px solid #1e293b',
-              }}
-            >
-              <div
-                style={{
-                  fontSize: '10.5px',
-                  fontWeight: 800,
-                  color: deskConfig.accentColor,
-                  marginBottom: '6px',
-                }}
-              >
-                ⚡ SKILL ATIVA:{' '}
-                {DEPARTMENT_SKILLS_SUMMARY[selectedDepartment].skillName}
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px' }}>
-                {DEPARTMENT_SKILLS_SUMMARY[selectedDepartment].libraries.map(
-                  (lib, i) => (
-                    <span
-                      key={i}
-                      style={{
-                        fontSize: '10px',
-                        background: '#1e293b',
-                        color: '#cbd5e1',
-                        padding: '2px 7px',
-                        borderRadius: '4px',
-                        fontWeight: 600,
-                      }}
-                    >
-                      {lib}
-                    </span>
-                  )
-                )}
-              </div>
-            </div>
-          )}
-        </section>
-
-        {/* Quality Gate Human-in-the-Loop (Aprovação Fácil para o Usuário) */}
+        {/* Quality Gate Human-in-the-Loop */}
         {awaitingTask && (
           <section
             style={{
-              background:
-                'linear-gradient(180deg, rgba(245, 158, 11, 0.14) 0%, rgba(15, 23, 42, 0.95) 100%)',
-              border: '1.5px solid #f59e0b',
+              background: '#111827',
+              border: '1px solid rgba(245, 158, 11, 0.45)',
               borderRadius: '12px',
-              padding: '16px',
+              padding: '16px 18px',
             }}
           >
             <div
               style={{
                 display: 'flex',
-                justifyContent: 'space-between',
                 alignItems: 'center',
-                marginBottom: '8px',
+                justifyContent: 'space-between',
+                marginBottom: '10px',
               }}
             >
-              <span
+              <div
                 style={{
-                  fontSize: '12px',
-                  fontWeight: 800,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
                   color: '#fbbf24',
-                  letterSpacing: '0.04em',
-                }}
-              >
-                ⚠️ SUA APROVAÇÃO É NECESSÁRIA
-              </span>
-              <span
-                style={{
-                  fontSize: '11px',
-                  background: 'rgba(245, 158, 11, 0.2)',
-                  color: '#fde68a',
-                  padding: '2px 8px',
-                  borderRadius: '999px',
+                  fontSize: '12.5px',
                   fontWeight: 700,
                 }}
               >
+                <AlertCircle size={15} />
+                Aprovação Humana Necessária
+              </div>
+              <span style={{ fontSize: '11px', color: '#94a3b8' }}>
                 Tentativa {awaitingTask.attempts} de {awaitingTask.maxAttempts}
               </span>
             </div>
 
-            {humanSummary?.approvalChecklist &&
-              humanSummary.approvalChecklist.length > 0 && (
-                <div
-                  style={{
-                    background: 'rgba(9, 13, 22, 0.7)',
-                    border: '1px solid rgba(245, 158, 11, 0.3)',
-                    borderRadius: '8px',
-                    padding: '10px 12px',
-                    marginBottom: '12px',
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: '11px',
-                      fontWeight: 800,
-                      color: '#fde68a',
-                      marginBottom: '6px',
-                    }}
-                  >
-                    O QUE AVALIAR ANTES DE APROVAR:
-                  </div>
-                  <ul
-                    style={{
-                      paddingLeft: '18px',
-                      fontSize: '12px',
-                      color: '#fef3c7',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '4px',
-                      lineHeight: 1.4,
-                    }}
-                  >
-                    {humanSummary.approvalChecklist.map((item, idx) => (
-                      <li key={idx}>{item}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+            <p
+              style={{
+                fontSize: '12.5px',
+                color: '#cbd5e1',
+                marginBottom: '12px',
+                lineHeight: 1.5,
+              }}
+            >
+              Revise a entrega abaixo. Você pode aprovar para liberar as
+              próximas etapas do fluxo ou solicitar ajustes específicos.
+            </p>
 
             <textarea
               value={feedback}
               onChange={(e) => setFeedback(e.target.value)}
-              placeholder="Quer alterar alguma cor, funcionalidade ou detalhe? Escreva aqui e clique em 'Pedir Ajuste'..."
+              placeholder="Se precisar de ajustes, descreva aqui o que o agente deve mudar na próxima versão..."
               rows={2}
               style={{
                 width: '100%',
-                background: '#090d16',
-                border: '1px solid #475569',
+                background: '#070a10',
+                border: '1px solid #334155',
                 borderRadius: '8px',
-                padding: '10px',
+                padding: '10px 12px',
                 color: '#f8fafc',
-                fontSize: '12px',
+                fontSize: '12.5px',
                 marginBottom: '10px',
                 resize: 'vertical',
+                outline: 'none',
               }}
             />
 
             {actionError && (
               <div
                 style={{
-                  color: '#f87171',
+                  color: '#fca5a5',
                   fontSize: '12px',
                   marginBottom: '10px',
                 }}
@@ -404,491 +344,146 @@ export function AgentDrawer() {
 
             <div style={{ display: 'flex', gap: '10px' }}>
               <button
+                type="button"
                 disabled={submitting}
                 onClick={() => handleApprove(awaitingTask.id)}
                 style={{
                   flex: 1.2,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
                   background: '#10b981',
                   border: 'none',
-                  color: '#052e16',
-                  fontWeight: 800,
-                  fontSize: '13px',
-                  padding: '11px',
+                  color: '#032016',
+                  fontWeight: 700,
+                  fontSize: '12.5px',
+                  padding: '10px 14px',
                   borderRadius: '8px',
                   cursor: submitting ? 'not-allowed' : 'pointer',
                 }}
               >
-                ✓ Aprovar e Avançar
+                <CheckCircle2 size={15} />
+                Aprovar e Avançar
               </button>
               <button
+                type="button"
                 disabled={submitting}
                 onClick={() => handleReject(awaitingTask.id)}
                 style={{
                   flex: 1,
-                  background: '#ef4444',
-                  border: 'none',
-                  color: '#fff',
-                  fontWeight: 700,
-                  fontSize: '13px',
-                  padding: '11px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  background: '#1e293b',
+                  border: '1px solid #475569',
+                  color: '#f8fafc',
+                  fontWeight: 600,
+                  fontSize: '12.5px',
+                  padding: '10px 14px',
                   borderRadius: '8px',
                   cursor: submitting ? 'not-allowed' : 'pointer',
                 }}
               >
-                ↺ Pedir Ajuste
+                <RotateCcw size={14} />
+                Solicitar Ajuste
               </button>
             </div>
           </section>
         )}
 
-        {/* ENTREGA DO AGENTE (Abas: Relatório Fácil / Preview Ao Vivo / JSON Técnico) */}
-        {latestArtifact && (
-          <section
-            style={{
-              background: '#0f172a',
-              border: '1px solid #1e293b',
-              borderRadius: '12px',
-              overflow: 'hidden',
-            }}
-          >
-            {/* Barra de Abas */}
-            <div
-              style={{
-                display: 'flex',
-                borderBottom: '1px solid #1e293b',
-                background: '#090d16',
-              }}
-            >
-              <button
-                onClick={() => setActiveTab('executive')}
-                style={{
-                  flex: 1,
-                  padding: '11px 8px',
-                  background:
-                    activeTab === 'executive' ? '#0f172a' : 'transparent',
-                  border: 'none',
-                  borderBottom:
-                    activeTab === 'executive'
-                      ? `2px solid ${deskConfig.accentColor}`
-                      : '2px solid transparent',
-                  color: activeTab === 'executive' ? '#f8fafc' : '#94a3b8',
-                  fontWeight: 800,
-                  fontSize: '12px',
-                  cursor: 'pointer',
-                }}
-              >
-                📋 Relatório Fácil (v{latestArtifact.version})
-              </button>
-
-              {htmlPreviewFile && (
-                <button
-                  onClick={() => setActiveTab('preview')}
-                  style={{
-                    flex: 1,
-                    padding: '11px 8px',
-                    background:
-                      activeTab === 'preview' ? '#0f172a' : 'transparent',
-                    border: 'none',
-                    borderBottom:
-                      activeTab === 'preview'
-                        ? `2px solid ${deskConfig.accentColor}`
-                        : '2px solid transparent',
-                    color: activeTab === 'preview' ? '#38bdf8' : '#94a3b8',
-                    fontWeight: 800,
-                    fontSize: '12px',
-                    cursor: 'pointer',
-                  }}
-                >
-                  🖥️ Testar Entrega Ao Vivo
-                </button>
-              )}
-
-              <button
-                onClick={() => setActiveTab('json')}
-                style={{
-                  padding: '11px 14px',
-                  background: activeTab === 'json' ? '#0f172a' : 'transparent',
-                  border: 'none',
-                  borderBottom:
-                    activeTab === 'json'
-                      ? `2px solid ${deskConfig.accentColor}`
-                      : '2px solid transparent',
-                  color: activeTab === 'json' ? '#f8fafc' : '#64748b',
-                  fontWeight: 700,
-                  fontSize: '11px',
-                  cursor: 'pointer',
-                }}
-              >
-                {'{ }'} JSON
-              </button>
-            </div>
-
-            {/* Conteúdo da Aba 1: RELATÓRIO EXECUTIVO FÁCIL DE ENTENDER */}
-            {activeTab === 'executive' && (
+        {/* TAB 1: ENTREGA ESPECIALIZADA (ZERO JSON CRU) */}
+        {drawerTab === 'deliverable' && (
+          <>
+            {!activeArtifact ? (
               <div
                 style={{
-                  padding: '16px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '14px',
+                  background: '#0d131f',
+                  border: '1px solid #1e293b',
+                  borderRadius: '10px',
+                  padding: '28px',
+                  textAlign: 'center',
                 }}
               >
-                {/* Título executivo claro */}
-                <div>
-                  <div
-                    style={{
-                      fontSize: '11px',
-                      color: deskConfig.accentColor,
-                      fontWeight: 800,
-                      marginBottom: '4px',
-                    }}
-                  >
-                    RESUMO DA ENTREGA • VERSÃO {latestArtifact.version}
-                  </div>
-                  <h3
-                    style={{
-                      fontSize: '16px',
-                      fontWeight: 800,
-                      color: '#f8fafc',
-                      lineHeight: 1.35,
-                    }}
-                  >
-                    {humanSummary?.headline ??
-                      (latestArtifact.content.executiveSummary as string) ??
-                      latestArtifact.name}
-                  </h3>
-                </div>
-
-                {/* Botão Rápido para Abrir o Produto Construído se houver HTML */}
-                {htmlPreviewFile && (
-                  <div
-                    style={{
-                      background: 'rgba(56, 189, 248, 0.1)',
-                      border: '1px solid #38bdf8',
-                      borderRadius: '10px',
-                      padding: '12px 14px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: '10px',
-                    }}
-                  >
-                    <div>
-                      <div
-                        style={{
-                          fontSize: '12px',
-                          fontWeight: 800,
-                          color: '#38bdf8',
-                        }}
-                      >
-                        🚀 {htmlPreviewFile.label}
-                      </div>
-                      <div style={{ fontSize: '11px', color: '#cbd5e1' }}>
-                        Arquivo construído em:{' '}
-                        <code>{htmlPreviewFile.relativePath}</code>
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: '6px' }}>
-                      <button
-                        onClick={() => setActiveTab('preview')}
-                        style={{
-                          background: '#38bdf8',
-                          color: '#090d16',
-                          border: 'none',
-                          borderRadius: '6px',
-                          padding: '7px 11px',
-                          fontSize: '11px',
-                          fontWeight: 800,
-                          cursor: 'pointer',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        ▶ Ver Aqui
-                      </button>
-                      <a
-                        href={htmlPreviewFile.previewUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{
-                          background: '#1e293b',
-                          color: '#e2e8f0',
-                          textDecoration: 'none',
-                          borderRadius: '6px',
-                          padding: '7px 10px',
-                          fontSize: '11px',
-                          fontWeight: 700,
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        ↗ Nova Aba
-                      </a>
-                    </div>
-                  </div>
-                )}
-
-                {/* Principais Decisões Tomadas pelo Agente */}
-                {humanSummary?.keyDecisions &&
-                  humanSummary.keyDecisions.length > 0 && (
-                    <div
-                      style={{
-                        background: '#090d16',
-                        border: '1px solid #1e293b',
-                        borderRadius: '10px',
-                        padding: '12px 14px',
-                      }}
-                    >
-                      <div
-                        style={{
-                          fontSize: '11px',
-                          fontWeight: 800,
-                          color: '#94a3b8',
-                          marginBottom: '8px',
-                          letterSpacing: '0.04em',
-                        }}
-                      >
-                        PRINCIPAIS DECISÕES & RESULTADOS
-                      </div>
-                      <ul
-                        style={{
-                          paddingLeft: '18px',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '6px',
-                          fontSize: '12.5px',
-                          color: '#e2e8f0',
-                          lineHeight: 1.45,
-                        }}
-                      >
-                        {humanSummary.keyDecisions.map((decision, idx) => (
-                          <li key={idx}>{decision}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                {/* Seções Detalhadas em Cartões Fáceis de Ler */}
-                {humanSummary?.sections?.map((sec, idx) => (
-                  <div
-                    key={idx}
-                    style={{
-                      background: '#090d16',
-                      border: '1px solid #1e293b',
-                      borderRadius: '10px',
-                      padding: '12px 14px',
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: '13px',
-                        fontWeight: 800,
-                        color: deskConfig.accentColor,
-                        marginBottom: '4px',
-                      }}
-                    >
-                      {sec.title}
-                    </div>
-                    <p
-                      style={{
-                        fontSize: '12px',
-                        color: '#94a3b8',
-                        marginBottom:
-                          sec.items && sec.items.length > 0 ? '8px' : '0',
-                        lineHeight: 1.4,
-                      }}
-                    >
-                      {sec.summary}
-                    </p>
-                    {sec.items && sec.items.length > 0 && (
-                      <div
-                        style={{
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '5px',
-                        }}
-                      >
-                        {sec.items.map((item, i) => (
-                          <div
-                            key={i}
-                            style={{
-                              fontSize: '12px',
-                              color: '#e2e8f0',
-                              background: '#0f172a',
-                              padding: '6px 10px',
-                              borderRadius: '6px',
-                              borderLeft: `3px solid ${deskConfig.accentColor}`,
-                            }}
-                          >
-                            {item}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-
-                {/* Lista de Todos os Arquivos Reais Gravados no Disco */}
-                {builtFiles.length > 0 && (
-                  <div
-                    style={{
-                      background: '#090d16',
-                      border: '1px solid #1e293b',
-                      borderRadius: '10px',
-                      padding: '12px 14px',
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: '11px',
-                        fontWeight: 800,
-                        color: '#94a3b8',
-                        marginBottom: '8px',
-                      }}
-                    >
-                      ARQUIVOS REAIS CONSTRUÍDOS NO WORKSPACE ({builtFiles.length})
-                    </div>
-                    <div
-                      style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '6px',
-                      }}
-                    >
-                      {builtFiles.map((bf, i) => (
-                        <a
-                          key={i}
-                          href={bf.previewUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          style={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            background: '#0f172a',
-                            padding: '8px 10px',
-                            borderRadius: '6px',
-                            color: '#38bdf8',
-                            textDecoration: 'none',
-                            fontSize: '12px',
-                            fontWeight: 600,
-                          }}
-                        >
-                          <span>📄 {bf.label}</span>
-                          <span style={{ fontSize: '11px', color: '#94a3b8' }}>
-                            Abrir ↗
-                          </span>
-                        </a>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Conteúdo da Aba 2: PREVIEW AO VIVO (Iframe Interativo da Aplicação/Protótipo Construído) */}
-            {activeTab === 'preview' && htmlPreviewFile && (
-              <div style={{ padding: '12px' }}>
                 <div
                   style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    marginBottom: '8px',
+                    fontSize: '14px',
+                    fontWeight: 600,
+                    color: '#e2e8f0',
+                    marginBottom: '6px',
                   }}
                 >
-                  <span
-                    style={{
-                      fontSize: '11px',
-                      color: '#94a3b8',
-                      fontWeight: 700,
-                    }}
-                  >
-                    Executando ao vivo: <code>{htmlPreviewFile.relativePath}</code>
-                  </span>
-                  <a
-                    href={htmlPreviewFile.previewUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{
-                      fontSize: '11px',
-                      color: '#38bdf8',
-                      fontWeight: 700,
-                      textDecoration: 'none',
-                    }}
-                  >
-                    Abrir em Tela Cheia ↗
-                  </a>
+                  {selectedDepartment === 'director'
+                    ? 'Orquestrador Diretor (Planejamento DAG)'
+                    : 'Nenhuma entrega produzida ainda'}
                 </div>
-                <iframe
-                  src={htmlPreviewFile.previewUrl}
-                  title={htmlPreviewFile.label}
-                  style={{
-                    width: '100%',
-                    height: '430px',
-                    border: '1px solid #334155',
-                    borderRadius: '8px',
-                    background: '#070a12',
-                  }}
-                />
+                <p style={{ fontSize: '12.5px', color: '#94a3b8', lineHeight: 1.5 }}>
+                  {agent.statusBubble ??
+                    'Inicie um projeto no painel superior para acompanhar o trabalho deste especialista.'}
+                </p>
               </div>
-            )}
+            ) : (
+              <>
+                {typeof activeArtifact.content.incorporatedFeedbackNotes ===
+                  'string' && (
+                  <div
+                    style={{
+                      background: 'rgba(16, 185, 129, 0.1)',
+                      border: '1px solid rgba(16, 185, 129, 0.35)',
+                      borderRadius: '8px',
+                      padding: '10px 14px',
+                      fontSize: '12px',
+                      color: '#6ee7b7',
+                    }}
+                  >
+                    <strong>Revisão aplicada:</strong>{' '}
+                    {activeArtifact.content.incorporatedFeedbackNotes}
+                  </div>
+                )}
 
-            {/* Conteúdo da Aba 3: JSON TÉCNICO COMPLETO */}
-            {activeTab === 'json' && (
-              <div style={{ padding: '14px' }}>
-                <pre
-                  style={{
-                    fontSize: '11px',
-                    color: '#93c5fd',
-                    overflowX: 'auto',
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
-                    lineHeight: 1.45,
-                    maxHeight: '380px',
-                  }}
-                >
-                  {JSON.stringify(latestArtifact.content, null, 2)}
-                </pre>
-              </div>
+                {selectedDepartment === 'research' && (
+                  <ResearchRenderer content={activeArtifact.content} />
+                )}
+                {selectedDepartment === 'engineering' && (
+                  <EngineeringRenderer content={activeArtifact.content} />
+                )}
+                {selectedDepartment === 'design' && (
+                  <DesignRenderer content={activeArtifact.content} />
+                )}
+                {selectedDepartment === 'growth' && (
+                  <GrowthRenderer content={activeArtifact.content} />
+                )}
+              </>
             )}
-          </section>
+          </>
         )}
 
-        {/* Ferramentas & Acesso à Internet Executados pelo Agente */}
-        <section>
-          <h3
-            style={{
-              fontSize: '11px',
-              fontWeight: 800,
-              color: '#94a3b8',
-              letterSpacing: '0.06em',
-              marginBottom: '8px',
-            }}
-          >
-            FERRAMENTAS & ACESSO WEB ({agent.recentTools?.length ?? 0})
-          </h3>
-
-          {!agent.recentTools || agent.recentTools.length === 0 ? (
-            <div
-              style={{
-                fontSize: '12px',
-                color: '#64748b',
-                background: '#0f172a',
-                padding: '12px',
-                borderRadius: '8px',
-              }}
-            >
-              Nenhuma chamada de ferramenta registrada ainda para este Pod.
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {agent.recentTools.map((toolLog, idx) => (
+        {/* TAB 2: REGISTRO DE FERRAMENTAS & ACESSO WEB */}
+        {drawerTab === 'tools' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {!agent.recentTools || agent.recentTools.length === 0 ? (
+              <div
+                style={{
+                  background: '#0d131f',
+                  border: '1px solid #1e293b',
+                  borderRadius: '10px',
+                  padding: '20px',
+                  fontSize: '12.5px',
+                  color: '#94a3b8',
+                }}
+              >
+                Nenhuma chamada de ferramenta executada até o momento.
+              </div>
+            ) : (
+              agent.recentTools.map((toolLog, idx) => (
                 <div
                   key={`${toolLog.timestamp}-${idx}`}
                   style={{
-                    background: '#0f172a',
-                    border: `1px solid ${toolLog.success ? '#1e293b' : '#ef4444'}`,
-                    borderRadius: '8px',
-                    padding: '10px 12px',
+                    background: '#0d131f',
+                    border: `1px solid ${toolLog.success ? '#1e293b' : '#7f1d1d'}`,
+                    borderRadius: '10px',
+                    padding: '12px 14px',
                   }}
                 >
                   <div
@@ -896,43 +491,157 @@ export function AgentDrawer() {
                       display: 'flex',
                       justifyContent: 'space-between',
                       alignItems: 'center',
-                      marginBottom: '4px',
+                      marginBottom: '6px',
                     }}
                   >
-                    <code
+                    <span
                       style={{
-                        fontSize: '11px',
-                        fontWeight: 800,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontFamily: "'JetBrains Mono', monospace",
+                        fontSize: '12px',
+                        fontWeight: 700,
                         color: '#38bdf8',
                       }}
                     >
-                      🔧 {toolLog.toolName}
-                    </code>
+                      <Terminal size={13} />
+                      {toolLog.toolName}
+                    </span>
                     <span
                       style={{
-                        fontSize: '10px',
-                        color: toolLog.success ? '#4ade80' : '#f87171',
-                        fontWeight: 700,
+                        fontSize: '11px',
+                        color: toolLog.success ? '#34d399' : '#f87171',
+                        fontWeight: 600,
                       }}
                     >
                       {toolLog.durationMs}ms
                     </span>
                   </div>
-                  <div
-                    style={{
-                      fontSize: '11px',
-                      color: '#cbd5e1',
-                      lineHeight: 1.35,
-                    }}
-                  >
+                  <div style={{ fontSize: '12px', color: '#cbd5e1', lineHeight: 1.45 }}>
                     {toolLog.outputSummary}
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </section>
+              ))
+            )}
+          </div>
+        )}
+
+        {/* TAB 3: TAREFAS NO DAG */}
+        {drawerTab === 'tasks' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {departmentTasks.length === 0 ? (
+              <div
+                style={{
+                  background: '#0d131f',
+                  border: '1px solid #1e293b',
+                  borderRadius: '10px',
+                  padding: '20px',
+                  fontSize: '12.5px',
+                  color: '#94a3b8',
+                }}
+              >
+                Nenhuma tarefa atribuída a este departamento no plano atual.
+              </div>
+            ) : (
+              departmentTasks.map((task) => (
+                <div
+                  key={task.id}
+                  style={{
+                    background: '#0d131f',
+                    border: '1px solid #1e293b',
+                    borderRadius: '10px',
+                    padding: '14px',
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      marginBottom: '8px',
+                    }}
+                  >
+                    <code
+                      style={{
+                        fontFamily: "'JetBrains Mono', monospace",
+                        fontSize: '12px',
+                        fontWeight: 700,
+                        color: deskConfig.accentColor,
+                      }}
+                    >
+                      {task.taskKey}
+                    </code>
+                    <span
+                      style={{
+                        fontSize: '10.5px',
+                        fontWeight: 700,
+                        padding: '3px 8px',
+                        borderRadius: '6px',
+                        background: '#1e293b',
+                        color: '#e2e8f0',
+                      }}
+                    >
+                      {task.status.toUpperCase()} · {task.attempts}/
+                      {task.maxAttempts}
+                    </span>
+                  </div>
+                  <p
+                    style={{
+                      fontSize: '12.5px',
+                      color: '#cbd5e1',
+                      lineHeight: 1.5,
+                      marginBottom: '8px',
+                    }}
+                  >
+                    {task.objective}
+                  </p>
+                  {task.dependsOn.length > 0 && (
+                    <div
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        fontSize: '11px',
+                        color: '#64748b',
+                      }}
+                    >
+                      <ChevronRight size={12} />
+                      Depende de: {task.dependsOn.join(', ')}
+                    </div>
+                  )}
+                  {task.lastError && (
+                    <div
+                      style={{
+                        marginTop: '8px',
+                        fontSize: '11.5px',
+                        color: '#fca5a5',
+                        background: 'rgba(239, 68, 68, 0.1)',
+                        padding: '8px 10px',
+                        borderRadius: '6px',
+                      }}
+                    >
+                      {task.lastError}
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        )}
       </div>
     </aside>
   );
 }
+
+const iconBtnStyle: React.CSSProperties = {
+  background: '#111827',
+  border: '1px solid #1e293b',
+  color: '#cbd5e1',
+  borderRadius: '8px',
+  padding: '6px',
+  cursor: 'pointer',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+};

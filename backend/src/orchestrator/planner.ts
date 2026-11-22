@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { generateValidatedJson } from '../llm/llmService.js';
 
 // ============================================================================
 // 1. CONTRATO ZOD DO PLANO GERADO PELO AGENTE DIRETOR (LLM)
@@ -16,7 +17,7 @@ export const PlannedTaskSchema = z.object({
     .string()
     .regex(/^[a-z0-9_]+$/, 'task_key deve ser snake_case alfanumérico'),
   department: PlannedTaskDepartmentSchema,
-  objective: z.string().min(10, 'O objetivo da tarefa deve ser detalhado'),
+  objective: z.string().min(20, 'O objetivo da tarefa deve ser detalhado e específico ao escopo'),
   depends_on: z.array(z.string()).default([]),
   max_attempts: z.number().int().min(1).max(5).default(3),
   requires_approval: z.boolean().default(false),
@@ -26,8 +27,8 @@ export const ExecutionPlanSchema = z.object({
   project_title: z.string().min(3),
   tasks: z
     .array(PlannedTaskSchema)
-    .min(1, 'O plano deve conter pelo menos uma tarefa')
-    .max(25, 'O plano não pode exceder 25 tarefas'),
+    .min(3, 'O plano deve conter pelo menos 3 tarefas especializadas')
+    .max(12, 'O plano não pode exceder 12 tarefas'),
 });
 
 export type PlannedTask = z.infer<typeof PlannedTaskSchema>;
@@ -63,7 +64,6 @@ export function validateExecutionPlanDAG(plan: ExecutionPlan): PlannedTask[] {
     taskMap.set(task.task_key, task);
   }
 
-  // Grafo de adjacência (u -> dependentes de u) e grau de entrada (in-degree)
   const inDegree = new Map<string, number>();
   const dependents = new Map<string, string[]>();
 
@@ -91,7 +91,6 @@ export function validateExecutionPlanDAG(plan: ExecutionPlan): PlannedTask[] {
     }
   }
 
-  // Algoritmo de Kahn para ordenação topológica e detecção de ciclos
   const queue: string[] = [];
   for (const [key, degree] of inDegree.entries()) {
     if (degree === 0) {
@@ -127,101 +126,90 @@ export function validateExecutionPlanDAG(plan: ExecutionPlan): PlannedTask[] {
 }
 
 // ============================================================================
-// 3. SERVIÇO DO PLANNER (AGENTE DIRETOR)
+// 3. SERVIÇO DO PLANNER REAL (AGENTE DIRETOR VIA LLM + KAHN DAG)
 // ============================================================================
 
 export interface LLMPlannerProvider {
-  generateRawPlan(rawScope: string): Promise<{
-    rawJson: unknown;
+  generateValidatedPlan(rawScope: string): Promise<{
+    plan: ExecutionPlan;
+    topologicalTasks: PlannedTask[];
     tokensUsed: number;
   }>;
 }
 
-/**
- * Fallback/Default Planner determinístico caso nenhuma chave de LLM externa seja injetada,
- * ou adaptador para chamada Structured Output da LLM.
- */
-export class DefaultDirectorPlannerProvider implements LLMPlannerProvider {
-  async generateRawPlan(rawScope: string): Promise<{
-    rawJson: unknown;
+export class RealDirectorPlannerProvider implements LLMPlannerProvider {
+  async generateValidatedPlan(rawScope: string): Promise<{
+    plan: ExecutionPlan;
+    topologicalTasks: PlannedTask[];
     tokensUsed: number;
   }> {
-    const title =
-      rawScope.trim().slice(0, 60) || 'Projeto Multiagente Autônomo';
+    let validatedTopoOrder: PlannedTask[] = [];
 
-    const rawJson: ExecutionPlan = {
-      project_title: title,
-      tasks: [
-        {
-          task_key: 'market_and_technical_research',
-          department: 'research',
-          objective: `Realizar levantamento de requisitos, benchmarks técnicos e riscos para o escopo: ${rawScope}`,
-          depends_on: [],
-          max_attempts: 3,
-          requires_approval: false,
-        },
-        {
-          task_key: 'ui_ux_system_design',
-          department: 'design',
-          objective:
-            'Definir arquitetura de interface, fluxos de usuário e tokens visuais baseados no relatório de pesquisa.',
-          depends_on: ['market_and_technical_research'],
-          max_attempts: 3,
-          requires_approval: true,
-        },
-        {
-          task_key: 'core_architecture_implementation',
-          department: 'engineering',
-          objective:
-            'Especificar contratos técnicos, esquema de dados e módulos de implementação baseados na pesquisa e no design aprovado.',
-          depends_on: ['market_and_technical_research', 'ui_ux_system_design'],
-          max_attempts: 3,
-          requires_approval: true,
-        },
-        {
-          task_key: 'launch_and_growth_strategy',
-          department: 'growth',
-          objective:
-            'Criar plano de go-to-market, métricas de ativação e canais de distribuição alinhados ao produto construído.',
-          depends_on: ['core_architecture_implementation'],
-          max_attempts: 3,
-          requires_approval: false,
-        },
-      ],
-    };
+    const result = await generateValidatedJson({
+      schema: ExecutionPlanSchema,
+      temperature: 0.2,
+      systemInstruction: `Você é o Diretor Executivo de Produto e Engenharia (DAG Planner) de um estúdio de software sênior.
+Sua única responsabilidade é transformar o escopo do usuário em um Grafo Acíclico Dirigido (DAG) de tarefas especializadas entre os departamentos:
+- "research": Pesquisa profunda de mercado, concorrentes reais, modelos de preço, dores de usuários e recomendação de posicionamento.
+- "engineering": Arquitetura de sistema e engenharia técnica (decisões de stack justificadas, fluxo Mermaid, modelagem SQL e contratos de API).
+- "design": Design de interface e UX (paleta, tipografia e código HTML/Tailwind responsivo completo das telas principais).
+- "growth": Estratégia de lançamento, posicionamento comercial, canais de aquisição e modelo de precificação.
+
+Regras obrigatórias:
+1. Retorne JSON estrito com:
+   {
+     "project_title": "Título curto e claro do produto",
+     "tasks": [
+       {
+         "task_key": "snake_case_unico",
+         "department": "research" | "design" | "engineering" | "growth",
+         "objective": "Objetivo específico e detalhado adaptado ao domínio exato pedido pelo usuário",
+         "depends_on": ["task_key_anterior"],
+         "max_attempts": 3,
+         "requires_approval": true | false
+       }
+     ]
+   }
+2. Crie exatamente 1 tarefa por departamento essencial (4 tarefas encadeadas no DAG):
+   - A tarefa de "research" não tem dependências (depends_on: []), requires_approval: true (para o usuário revisar a pesquisa antes de projetar).
+   - A tarefa de "engineering" (Arquitetura) depende da pesquisa (depends_on: [research_key]), requires_approval: true.
+   - A tarefa de "design" (Interface) depende da pesquisa e da arquitetura (depends_on: [research_key, engineering_key]), requires_approval: true.
+   - A tarefa de "growth" depende de engineering e design, requires_approval: false.
+3. Os objetivos devem citar explicitamente o domínio, público-alvo e funcionalidades centrais do escopo fornecido.`,
+      userPrompt: `Escopo do projeto informado pelo usuário:\n"""\n${rawScope}\n"""\n\nGere o plano DAG em JSON.`,
+      extraValidator: (plan) => {
+        const errors: string[] = [];
+        try {
+          validatedTopoOrder = validateExecutionPlanDAG(plan);
+        } catch (err) {
+          errors.push(err instanceof Error ? err.message : String(err));
+        }
+        return errors;
+      },
+    });
+
+    if (validatedTopoOrder.length === 0) {
+      validatedTopoOrder = validateExecutionPlanDAG(result.data);
+    }
 
     return {
-      rawJson,
-      tokensUsed: 850,
+      plan: result.data,
+      topologicalTasks: validatedTopoOrder,
+      tokensUsed: result.tokensUsed,
     };
   }
 }
 
 export class DirectorPlanner {
   constructor(
-    private readonly provider: LLMPlannerProvider = new DefaultDirectorPlannerProvider()
+    private readonly provider: LLMPlannerProvider = new RealDirectorPlannerProvider()
   ) {}
 
-  /**
-   * Gera o plano via LLM, valida o schema com Zod e verifica se o DAG é acíclico.
-   */
   async createValidatedPlan(rawScope: string): Promise<{
     plan: ExecutionPlan;
     topologicalTasks: PlannedTask[];
     tokensUsed: number;
   }> {
-    const { rawJson, tokensUsed } = await this.provider.generateRawPlan(rawScope);
-
-    // 1. Validação Estrutural (Zod)
-    const parsedPlan = ExecutionPlanSchema.parse(rawJson);
-
-    // 2. Validação Determinística de Grafo (DAG sem ciclos)
-    const topologicalTasks = validateExecutionPlanDAG(parsedPlan);
-
-    return {
-      plan: parsedPlan,
-      topologicalTasks,
-      tokensUsed,
-    };
+    return await this.provider.generateValidatedPlan(rawScope);
   }
 }

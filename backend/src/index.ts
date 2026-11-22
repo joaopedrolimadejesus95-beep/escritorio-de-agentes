@@ -6,12 +6,16 @@ import { z } from 'zod';
 import { pool } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
 import { OfficeStateMachine } from './orchestrator/stateMachine.js';
-import { ResearchPod } from './pods/researchPod.js';
 import {
-  DesignPod,
-  EngineeringPod,
-  GrowthPod,
-} from './pods/departmentPods.js';
+  getLLMStatus,
+  LLMNotConfiguredError,
+  loadLocalEnvFile,
+  saveRuntimeLLMConfig,
+} from './llm/llmService.js';
+import { ResearchPod } from './pods/researchPod.js';
+import { DesignPod } from './pods/designPod.js';
+import { EngineeringPod } from './pods/engineeringPod.js';
+import { GrowthPod } from './pods/growthPod.js';
 import {
   createOfficeSocketServer,
   getProjectRoom,
@@ -26,6 +30,13 @@ const CreateProjectSchema = z.object({
   title: z.string().min(3),
   rawScope: z.string().min(10),
   tokenBudget: z.number().int().positive().optional(),
+});
+
+const SaveLLMSettingsSchema = z.object({
+  provider: z.enum(['gemini', 'openai', 'ollama']),
+  model: z.string().min(2),
+  apiKey: z.string().optional(),
+  baseUrl: z.string().url().optional(),
 });
 
 async function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
@@ -52,7 +63,13 @@ function sendJson(
 }
 
 export async function startServer(): Promise<void> {
+  await loadLocalEnvFile();
   await runMigrations();
+
+  // Reconcilia tarefas órfãs que ficaram em 'running' caso o servidor tenha reiniciado no meio de uma execução
+  await pool.query(
+    `UPDATE tasks SET status = 'ready', updated_at = NOW() WHERE status = 'running'`
+  );
 
   const stateMachine = new OfficeStateMachine();
 
@@ -126,7 +143,42 @@ export async function startServer(): Promise<void> {
 
       // GET /api/health
       if (req.method === 'GET' && url.pathname === '/api/health') {
-        sendJson(res, 200, { status: 'ok', timestamp: new Date().toISOString() });
+        const llm = await getLLMStatus();
+        sendJson(res, 200, {
+          status: 'ok',
+          llm,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      // GET /api/settings/llm - Retorna status do provedor de IA (sem expor chave completa)
+      if (req.method === 'GET' && url.pathname === '/api/settings/llm') {
+        const status = await getLLMStatus();
+        sendJson(res, 200, status);
+        return;
+      }
+
+      // POST /api/settings/llm - Configura provedor de IA real (Gemini, OpenAI ou Ollama)
+      if (req.method === 'POST' && url.pathname === '/api/settings/llm') {
+        const body = await readJsonBody(req);
+        const parsed = SaveLLMSettingsSchema.safeParse(body);
+        if (!parsed.success) {
+          sendJson(res, 400, {
+            error: 'Configuração de IA inválida',
+            issues: parsed.error.issues,
+          });
+          return;
+        }
+        if (parsed.data.provider !== 'ollama' && !parsed.data.apiKey?.trim()) {
+          sendJson(res, 400, {
+            error: `Informe uma API Key válida para o provedor ${parsed.data.provider}.`,
+          });
+          return;
+        }
+
+        const status = await saveRuntimeLLMConfig(parsed.data, true);
+        sendJson(res, 200, status);
         return;
       }
 
@@ -164,6 +216,13 @@ export async function startServer(): Promise<void> {
 
       sendJson(res, 404, { error: 'Rota não encontrada' });
     } catch (error) {
+      if (error instanceof LLMNotConfiguredError) {
+        sendJson(res, 428, {
+          code: error.code,
+          error: error.message,
+        });
+        return;
+      }
       const message = error instanceof Error ? error.message : String(error);
       console.error('[HTTP Error]:', message);
       sendJson(res, 500, { error: message });

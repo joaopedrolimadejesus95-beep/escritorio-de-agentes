@@ -425,7 +425,7 @@ export class OfficeStateMachine extends EventEmitter {
                   activeTaskId: task.id,
                   activeTaskKey: task.taskKey,
                   activeTool: name,
-                  statusBubble: `🔧 Usando ferramenta: ${name}...`,
+                  statusBubble: `Executando ferramenta: ${name}`,
                   taskStatus: 'running',
                   attempts: task.attempts,
                 });

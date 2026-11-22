@@ -29,25 +29,32 @@ export interface ToolExecutionReport<TOutput = any> {
 }
 
 // ============================================================================
-// 2. FERRAMENTAS REAIS DE INTERNET & SISTEMA
+// 2. FERRAMENTAS REAIS DE INTERNET & SISTEMA (ZERO EMOJIS, ZERO MOCKS)
 // ============================================================================
 
-/**
- * Tool 1: `web_search`
- * Consulta a internet em tempo real (Wikipedia OpenSearch + HackerNews Algolia API + DuckDuckGo Instant Answer)
- * para trazer dados reais, artigos técnicos, produtos e tendências sobre o escopo do projeto.
- */
 export interface WebSearchResultItem {
   title: string;
   url: string;
   snippet: string;
-  source: 'wikipedia' | 'hackernews' | 'duckduckgo';
+  source: 'duckduckgo' | 'wikipedia' | 'hackernews';
 }
 
 const WebSearchInputSchema = z.object({
-  query: z.string().min(2).max(150),
-  limit: z.number().int().min(1).max(10).default(5),
+  query: z.string().min(2).max(160),
+  limit: z.number().int().min(1).max(12).default(8),
 });
+
+function decodeHtmlEntities(str: string): string {
+  return str
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 export const WebSearchTool: AgentToolDefinition<
   z.infer<typeof WebSearchInputSchema>,
@@ -55,17 +62,69 @@ export const WebSearchTool: AgentToolDefinition<
 > = {
   name: 'web_search',
   description:
-    'Pesquisa na internet em tempo real (Artigos Técnicos, HackerNews, Wikipedia e DuckDuckGo) sobre tecnologias, mercado e concorrentes.',
+    'Pesquisa na internet em tempo real (DuckDuckGo Web, HackerNews Algolia e Wikipedia PT/EN) para coletar concorrentes, preços, benchmarks e artigos reais.',
   allowedDepartments: ['director', 'research', 'design', 'engineering', 'growth'],
   inputSchema: WebSearchInputSchema,
   async execute({ query, limit }) {
     const results: WebSearchResultItem[] = [];
+    const seenUrls = new Set<string>();
     const encoded = encodeURIComponent(query);
 
-    // 1. HackerNews Algolia Search API (Excelente para benchmarks de SaaS, engenharia e startups reais)
+    const pushUnique = (item: WebSearchResultItem) => {
+      if (!item.url || seenUrls.has(item.url)) return;
+      seenUrls.add(item.url);
+      results.push(item);
+    };
+
+    // 1. DuckDuckGo HTML Search (Resultados reais da Web sobre concorrentes, preços e produtos)
+    try {
+      const ddgHtmlRes = await fetch(
+        `https://html.duckduckgo.com/html/?q=${encoded}`,
+        {
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+            'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+          },
+          signal: AbortSignal.timeout(6000),
+        }
+      );
+
+      if (ddgHtmlRes.ok) {
+        const html = await ddgHtmlRes.text();
+        const blockRegex =
+          /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?(?:<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>|<div[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/div>)/gi;
+        let match: RegExpExecArray | null;
+        let count = 0;
+        while ((match = blockRegex.exec(html)) !== null && count < 6) {
+          let href = match[1] ?? '';
+          const uddgMatch = href.match(/uddg=([^&]+)/);
+          if (uddgMatch?.[1]) {
+            href = decodeURIComponent(uddgMatch[1]);
+          }
+          const title = decodeHtmlEntities((match[2] ?? '').replace(/<[^>]+>/g, ''));
+          const snippet = decodeHtmlEntities(
+            ((match[3] ?? match[4]) ?? '').replace(/<[^>]+>/g, '')
+          );
+          if (title && href.startsWith('http')) {
+            pushUnique({
+              title,
+              url: href,
+              snippet: snippet || title,
+              source: 'duckduckgo',
+            });
+            count++;
+          }
+        }
+      }
+    } catch {
+      // Segue para as outras fontes em paralelo/fallback
+    }
+
+    // 2. HackerNews Algolia Search API (Discussões técnicas, feedbacks reais de usuários e SaaS)
     try {
       const hnRes = await fetch(
-        `https://hn.algolia.com/api/v1/search?query=${encoded}&tags=story&hitsPerPage=${Math.min(limit, 4)}`,
+        `https://hn.algolia.com/api/v1/search?query=${encoded}&tags=story&hitsPerPage=4`,
         { signal: AbortSignal.timeout(4500) }
       );
       if (hnRes.ok) {
@@ -80,73 +139,48 @@ export const WebSearchTool: AgentToolDefinition<
         };
         for (const hit of hnData.hits ?? []) {
           if (hit.title) {
-            results.push({
+            pushUnique({
               title: hit.title,
               url:
                 hit.url ||
                 `https://news.ycombinator.com/item?id=${hit.objectID ?? ''}`,
-              snippet: `Discussão técnica verificada (${hit.points ?? 0} pts, ${hit.num_comments ?? 0} comentários).`,
+              snippet: `Discussão técnica (${hit.points ?? 0} pontos, ${hit.num_comments ?? 0} comentários no HackerNews).`,
               source: 'hackernews',
             });
           }
         }
       }
     } catch {
-      // Continua para as próximas fontes se houver timeout
+      // Continua
     }
 
-    // 2. Wikipedia REST Search API (Conceitos de domínio e mercado)
-    try {
-      const wikiRes = await fetch(
-        `https://pt.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encoded}&utf8=&format=json&srlimit=3`,
-        {
-          headers: { 'User-Agent': 'AIOfficeOrchestrator/1.0' },
-          signal: AbortSignal.timeout(4500),
-        }
-      );
-      if (wikiRes.ok) {
-        const wikiData = (await wikiRes.json()) as {
-          query?: {
-            search?: Array<{ title: string; snippet: string }>;
+    // 3. Wikipedia PT + EN Search API
+    for (const lang of ['pt', 'en'] as const) {
+      if (results.length >= limit) break;
+      try {
+        const wikiRes = await fetch(
+          `https://${lang}.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encoded}&utf8=&format=json&srlimit=2`,
+          {
+            headers: { 'User-Agent': 'AIOfficeOrchestrator/2.0' },
+            signal: AbortSignal.timeout(4000),
+          }
+        );
+        if (wikiRes.ok) {
+          const wikiData = (await wikiRes.json()) as {
+            query?: { search?: Array<{ title: string; snippet: string }> };
           };
-        };
-        for (const item of wikiData.query?.search ?? []) {
-          const cleanSnippet = item.snippet.replace(/<[^>]+>/g, '');
-          results.push({
-            title: item.title,
-            url: `https://pt.wikipedia.org/wiki/${encodeURIComponent(item.title.replace(/ /g, '_'))}`,
-            snippet: cleanSnippet,
-            source: 'wikipedia',
-          });
+          for (const item of wikiData.query?.search ?? []) {
+            pushUnique({
+              title: item.title,
+              url: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(item.title.replace(/ /g, '_'))}`,
+              snippet: decodeHtmlEntities(item.snippet.replace(/<[^>]+>/g, '')),
+              source: 'wikipedia',
+            });
+          }
         }
+      } catch {
+        // Continua
       }
-    } catch {
-      // Continua
-    }
-
-    // 3. DuckDuckGo Instant Answer API
-    try {
-      const ddgRes = await fetch(
-        `https://api.duckduckgo.com/?q=${encoded}&format=json&no_html=1&skip_disambig=1`,
-        { signal: AbortSignal.timeout(4000) }
-      );
-      if (ddgRes.ok) {
-        const ddgData = (await ddgRes.json()) as {
-          AbstractText?: string;
-          AbstractURL?: string;
-          Heading?: string;
-        };
-        if (ddgData.AbstractText && ddgData.AbstractURL) {
-          results.push({
-            title: ddgData.Heading || query,
-            url: ddgData.AbstractURL,
-            snippet: ddgData.AbstractText,
-            source: 'duckduckgo',
-          });
-        }
-      }
-    } catch {
-      // Continua
     }
 
     const finalResults = results.slice(0, limit);
@@ -156,18 +190,18 @@ export const WebSearchTool: AgentToolDefinition<
         results: finalResults,
         fetchedAt: new Date().toISOString(),
       },
-      summary: `Internet Search ("${query}"): ${finalResults.length} fontes reais encontradas (${finalResults.map((r) => r.source).join(', ') || 'cache local'})`,
+      summary: `Busca Web ("${query.slice(0, 40)}"): ${finalResults.length} resultados reais coletados`,
     };
   },
 };
 
 /**
  * Tool 2: `http_fetch_page`
- * Acessa uma URL real na internet via HTTP/HTTPS, extrai título, metadados e texto limpo.
+ * Acessa uma URL real na internet via HTTP/HTTPS, extrai título, meta description e texto limpo.
  */
 const HttpFetchInputSchema = z.object({
   url: z.string().url(),
-  maxChars: z.number().int().min(200).max(8000).default(2000),
+  maxChars: z.number().int().min(200).max(10000).default(3000),
 });
 
 export const HttpFetchPageTool: AgentToolDefinition<
@@ -176,13 +210,14 @@ export const HttpFetchPageTool: AgentToolDefinition<
     url: string;
     status: number;
     title: string;
+    metaDescription: string;
     textExcerpt: string;
     fetchedAt: string;
   }
 > = {
   name: 'http_fetch_page',
   description:
-    'Faz requisição HTTP GET em tempo real para qualquer página ou API pública da internet e extrai seu conteúdo textual.',
+    'Faz requisição HTTP GET em tempo real para ler conteúdo de páginas de concorrentes, documentações e artigos.',
   allowedDepartments: ['research', 'design', 'engineering', 'growth'],
   inputSchema: HttpFetchInputSchema,
   async execute({ url, maxChars }) {
@@ -190,34 +225,38 @@ export const HttpFetchPageTool: AgentToolDefinition<
       const response = await fetch(url, {
         headers: {
           'User-Agent':
-            'Mozilla/5.0 (compatible; AIOfficeAgentBot/1.0; +http://localhost:5173)',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
           Accept: 'text/html,application/json,text/plain,*/*',
         },
-        signal: AbortSignal.timeout(5500),
+        signal: AbortSignal.timeout(6000),
       });
 
       const rawText = await response.text();
       const titleMatch = rawText.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-      const title = titleMatch?.[1]?.trim() || url;
+      const title = decodeHtmlEntities(titleMatch?.[1] ?? url);
+      const metaMatch = rawText.match(
+        /<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i
+      );
+      const metaDescription = decodeHtmlEntities(metaMatch?.[1] ?? '');
 
-      // Remove scripts, styles e tags HTML
-      const cleanedText = rawText
-        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, maxChars);
+      const cleanedText = decodeHtmlEntities(
+        rawText
+          .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+          .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+          .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
+          .replace(/<[^>]+>/g, ' ')
+      ).slice(0, maxChars);
 
       return {
         data: {
           url,
           status: response.status,
           title,
+          metaDescription,
           textExcerpt: cleanedText,
           fetchedAt: new Date().toISOString(),
         },
-        summary: `HTTP GET ${url} -> Status ${response.status} ("${title.slice(0, 50)}", ${cleanedText.length} chars extraídos)`,
+        summary: `Leitura HTTP ${response.status} em ${new URL(url).hostname} (${cleanedText.length} caracteres extraídos)`,
       };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -225,11 +264,12 @@ export const HttpFetchPageTool: AgentToolDefinition<
         data: {
           url,
           status: 0,
-          title: 'Unreachable or timed out',
+          title: 'Inacessível',
+          metaDescription: '',
           textExcerpt: `Falha de rede ao acessar ${url}: ${msg}`,
           fetchedAt: new Date().toISOString(),
         },
-        summary: `HTTP GET ${url} -> Timeout/Erro tratado (${msg})`,
+        summary: `Falha ao ler ${url}: ${msg}`,
       };
     }
   },
@@ -241,7 +281,7 @@ export const HttpFetchPageTool: AgentToolDefinition<
  */
 const GithubSearchInputSchema = z.object({
   topic: z.string().min(2).max(100),
-  limit: z.number().int().min(1).max(5).default(3),
+  limit: z.number().int().min(1).max(6).default(4),
 });
 
 export interface GithubRepoItem {
@@ -258,7 +298,7 @@ export const GithubTechRadarTool: AgentToolDefinition<
 > = {
   name: 'github_tech_radar',
   description:
-    'Consulta a API oficial do GitHub em tempo real para descobrir bibliotecas, arquiteturas de referência e repositórios populares.',
+    'Consulta a API oficial do GitHub em tempo real para descobrir bibliotecas, padrões arquiteturais e repositórios de referência.',
   allowedDepartments: ['research', 'engineering', 'design'],
   inputSchema: GithubSearchInputSchema,
   async execute({ topic, limit }) {
@@ -270,7 +310,7 @@ export const GithubTechRadarTool: AgentToolDefinition<
         `https://api.github.com/search/repositories?q=${encoded}&sort=stars&order=desc&per_page=${limit}`,
         {
           headers: {
-            'User-Agent': 'AIOfficeOrchestrator/1.0',
+            'User-Agent': 'AIOfficeOrchestrator/2.0',
             Accept: 'application/vnd.github+json',
           },
           signal: AbortSignal.timeout(5000),
@@ -299,20 +339,18 @@ export const GithubTechRadarTool: AgentToolDefinition<
         }
       }
     } catch {
-      // Fallback caso rate-limit da API pública seja atingido
+      // Rate-limit ou timeout tratado
     }
 
     return {
       data: { topic, repositories },
-      summary: `GitHub API ("${topic}"): ${repositories.length} repositórios analisados (${repositories.map((r) => `${r.fullName} ★${r.stars}`).join(', ') || 'nenhum'})`,
+      summary: `GitHub Radar ("${topic.slice(0, 35)}"): ${repositories.length} repositórios analisados`,
     };
   },
 };
 
 /**
  * Tool 4: `npm_package_radar`
- * Consulta o registro oficial do NPM (registry.npmjs.org) em tempo real para descobrir
- * pacotes, bibliotecas, versões atuais, downloads/score e CDN links para uso pelos agentes.
  */
 const NpmSearchInputSchema = z.object({
   query: z.string().min(2).max(100),
@@ -333,7 +371,7 @@ export const NpmPackageRadarTool: AgentToolDefinition<
 > = {
   name: 'npm_package_radar',
   description:
-    'Pesquisa pacotes e bibliotecas reais no registro oficial do NPM (registry.npmjs.org) e gera URLs de CDN prontas para uso.',
+    'Pesquisa pacotes reais no registro oficial do NPM (registry.npmjs.org) e versões atuais.',
   allowedDepartments: ['research', 'design', 'engineering', 'growth'],
   inputSchema: NpmSearchInputSchema,
   async execute({ query, limit }) {
@@ -362,7 +400,7 @@ export const NpmPackageRadarTool: AgentToolDefinition<
           packages.push({
             name: pkg.name,
             version: pkg.version,
-            description: pkg.description ?? 'Biblioteca NPM verificada',
+            description: pkg.description ?? 'Pacote NPM verificado',
             npmUrl:
               pkg.links?.npm ?? `https://www.npmjs.com/package/${pkg.name}`,
             cdnUrl: `https://cdn.jsdelivr.net/npm/${pkg.name}@${pkg.version}`,
@@ -370,20 +408,18 @@ export const NpmPackageRadarTool: AgentToolDefinition<
         }
       }
     } catch {
-      // Fallback silencioso em caso de timeout
+      // Timeout tratado
     }
 
     return {
       data: { query, packages },
-      summary: `NPM Registry ("${query}"): ${packages.length} bibliotecas verificadas (${packages.map((p) => `${p.name}@${p.version}`).join(', ') || 'nenhuma'})`,
+      summary: `NPM Registry ("${query.slice(0, 35)}"): ${packages.length} pacotes verificados`,
     };
   },
 };
 
 /**
  * Tool 5: `workspace_write_file`
- * Permite que os Pods escrevam arquivos reais (Markdown, especificações, JSON, código) em disco
- * dentro do diretório sandboxed `workspace_outputs/<projectId>/`.
  */
 const WorkspaceWriteInputSchema = z.object({
   projectId: z.string().min(1),
@@ -399,7 +435,7 @@ export const WorkspaceWriteFileTool: AgentToolDefinition<
 > = {
   name: 'workspace_write_file',
   description:
-    'Salva artefatos reais (relatórios .md, contratos .json, diagramas, código) no diretório sandboxed workspace_outputs do projeto.',
+    'Salva artefatos reais (HTML/Tailwind, SQL, Markdown, contratos) no diretório workspace_outputs do projeto.',
   allowedDepartments: ['research', 'design', 'engineering', 'growth'],
   inputSchema: WorkspaceWriteInputSchema,
   async execute({ projectId, relativePath, content }) {
@@ -422,7 +458,7 @@ export const WorkspaceWriteFileTool: AgentToolDefinition<
         savedPath: fullPath,
         bytesWritten,
       },
-      summary: `Arquivo salvo em disco: workspace_outputs/${projectId}/${safeRelative} (${bytesWritten} bytes)`,
+      summary: `Arquivo gravado: ${safeRelative} (${bytesWritten} bytes)`,
     };
   },
 };

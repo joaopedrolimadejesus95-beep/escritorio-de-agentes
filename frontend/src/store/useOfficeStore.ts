@@ -27,13 +27,23 @@ export interface ActiveHandoffAnimation {
   durationMs: number;
 }
 
+export type LLMProviderType = 'gemini' | 'openai' | 'ollama';
+
+export interface LLMStatusDTO {
+  configured: boolean;
+  provider: LLMProviderType | null;
+  model: string | null;
+  maskedKey: string | null;
+  ollamaAvailable: boolean;
+}
+
 const DEFAULT_AGENTS: Record<DepartmentId, AgentDeskStateDTO> = {
   director: {
     department: 'director',
     visualState: 'idle',
     activeTaskId: null,
     activeTaskKey: null,
-    statusBubble: 'Aguardando novo escopo de projeto...',
+    statusBubble: 'Aguardando escopo do projeto',
     updatedAt: new Date().toISOString(),
   },
   research: {
@@ -41,7 +51,7 @@ const DEFAULT_AGENTS: Record<DepartmentId, AgentDeskStateDTO> = {
     visualState: 'idle',
     activeTaskId: null,
     activeTaskKey: null,
-    statusBubble: null,
+    statusBubble: 'Pronto para pesquisa de mercado',
     updatedAt: new Date().toISOString(),
   },
   design: {
@@ -49,7 +59,7 @@ const DEFAULT_AGENTS: Record<DepartmentId, AgentDeskStateDTO> = {
     visualState: 'idle',
     activeTaskId: null,
     activeTaskKey: null,
-    statusBubble: null,
+    statusBubble: 'Pronto para design de interface',
     updatedAt: new Date().toISOString(),
   },
   engineering: {
@@ -57,7 +67,7 @@ const DEFAULT_AGENTS: Record<DepartmentId, AgentDeskStateDTO> = {
     visualState: 'idle',
     activeTaskId: null,
     activeTaskKey: null,
-    statusBubble: null,
+    statusBubble: 'Pronto para arquitetura de sistema',
     updatedAt: new Date().toISOString(),
   },
   growth: {
@@ -65,7 +75,7 @@ const DEFAULT_AGENTS: Record<DepartmentId, AgentDeskStateDTO> = {
     visualState: 'idle',
     activeTaskId: null,
     activeTaskKey: null,
-    statusBubble: null,
+    statusBubble: 'Pronto para estratégia de lançamento',
     updatedAt: new Date().toISOString(),
   },
 };
@@ -78,21 +88,33 @@ interface OfficeStoreState {
   tasks: TaskDTO[];
   artifacts: ArtifactDTO[];
   selectedDepartment: DepartmentId | null;
+  hoveredDepartment: DepartmentId | null;
   activeHandoffs: ActiveHandoffAnimation[];
   lastError: string | null;
+  llmStatus: LLMStatusDTO | null;
+  isSettingsModalOpen: boolean;
 
-  // Actions
   connectSocket: (projectId?: string) => void;
   joinProject: (projectId: string) => void;
+  fetchLLMStatus: () => Promise<void>;
+  saveLLMSettings: (params: {
+    provider: LLMProviderType;
+    model: string;
+    apiKey?: string;
+    baseUrl?: string;
+  }) => Promise<void>;
+  setSettingsModalOpen: (open: boolean) => void;
   createProject: (params: {
     title: string;
     rawScope: string;
     tokenBudget?: number;
   }) => Promise<void>;
   selectDepartment: (department: DepartmentId | null) => void;
+  setHoveredDepartment: (department: DepartmentId | null) => void;
   approveTask: (taskId: string) => Promise<void>;
   rejectTask: (taskId: string, feedback: string) => Promise<void>;
   pauseProject: (reason?: string) => Promise<void>;
+  clearError: () => void;
   pruneExpiredHandoffs: (now: number) => void;
 }
 
@@ -104,10 +126,15 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => ({
   tasks: [],
   artifacts: [],
   selectedDepartment: null,
+  hoveredDepartment: null,
   activeHandoffs: [],
   lastError: null,
+  llmStatus: null,
+  isSettingsModalOpen: false,
 
   connectSocket: (initialProjectId?: string) => {
+    void get().fetchLLMStatus();
+
     const existing = get().socket;
     if (existing) {
       if (initialProjectId) {
@@ -135,7 +162,6 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => ({
       set({ connected: false });
     });
 
-    // 1. OFFICE_SNAPSHOT: Sincronização completa (suporta F5)
     socket.on('OFFICE_SNAPSHOT', (snapshot: OfficeSnapshotPayload) => {
       set({
         project: snapshot.project,
@@ -151,7 +177,6 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => ({
       );
     });
 
-    // 2. AGENT_STATE_CHANGED: Atualização discreta de animação, ferramenta ativa e balão
     socket.on('AGENT_STATE_CHANGED', (payload: AgentStateChangedPayload) => {
       set((state) => {
         const prevAgent = state.agents[payload.department];
@@ -195,7 +220,6 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => ({
       });
     });
 
-    // 3. ARTIFACT_HANDOFF: Registra artefato e dispara animação 3D entre mesas
     socket.on('ARTIFACT_HANDOFF', (payload: ArtifactHandoffPayload) => {
       const now = performance.now();
       const newAnimations: ActiveHandoffAnimation[] =
@@ -221,7 +245,6 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => ({
       });
     });
 
-    // 4. APPROVAL_REQUIRED: Atualiza estado do agente, tarefa e artefato para revisão no Drawer
     socket.on('APPROVAL_REQUIRED', (payload: ApprovalRequiredPayload) => {
       set((state) => {
         const artifactExists = state.artifacts.some(
@@ -237,11 +260,12 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => ({
           agents: {
             ...state.agents,
             [payload.department]: {
+              ...state.agents[payload.department],
               department: payload.department,
               visualState: 'awaiting_approval',
               activeTaskId: payload.task.id,
               activeTaskKey: payload.task.taskKey,
-              statusBubble: `Aprovação necessária: ${payload.artifact.name} (v${payload.artifact.version})`,
+              statusBubble: `Aguardando aprovação (v${payload.artifact.version})`,
               updatedAt: payload.timestamp,
             },
           },
@@ -249,7 +273,6 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => ({
       });
     });
 
-    // 5. BUDGET_UPDATED: Atualiza HUD de consumo de tokens e status do projeto
     socket.on('BUDGET_UPDATED', (payload: BudgetUpdatedPayload) => {
       set((state) => ({
         project: state.project
@@ -270,6 +293,37 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => ({
     set({ socket });
   },
 
+  fetchLLMStatus: async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/settings/llm`);
+      if (res.ok) {
+        const status = (await res.json()) as LLMStatusDTO;
+        set({ llmStatus: status });
+      }
+    } catch {
+      // Silencioso enquanto backend sobe
+    }
+  },
+
+  saveLLMSettings: async (params) => {
+    const res = await fetch(`${BACKEND_URL}/api/settings/llm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error ?? 'Falha ao salvar configuração de IA');
+    }
+    set({
+      llmStatus: data as LLMStatusDTO,
+      isSettingsModalOpen: false,
+      lastError: null,
+    });
+  },
+
+  setSettingsModalOpen: (open) => set({ isSettingsModalOpen: open }),
+
   joinProject: (projectId: string) => {
     const { socket } = get();
     if (!socket) {
@@ -280,35 +334,50 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => ({
   },
 
   createProject: async (params) => {
+    set({ lastError: null });
     const response = await fetch(`${BACKEND_URL}/api/projects`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params),
     });
 
+    const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      const errData = await response.json().catch(() => ({}));
-      throw new Error(errData.error ?? 'Falha ao criar projeto');
+      if (response.status === 428 || data.code === 'LLM_NOT_CONFIGURED') {
+        set({
+          isSettingsModalOpen: true,
+          lastError:
+            data.error ??
+            'Configure um provedor de IA (Gemini, OpenAI ou Ollama) para executar o fluxo real.',
+        });
+      } else {
+        set({ lastError: data.error ?? 'Falha ao iniciar projeto' });
+      }
+      throw new Error(data.error ?? 'Falha ao iniciar projeto');
     }
 
-    const data = (await response.json()) as {
+    const typed = data as {
       project: ProjectDTO;
       snapshot: OfficeSnapshotPayload;
     };
 
     set({
-      project: data.snapshot.project,
-      agents: data.snapshot.agents,
-      tasks: data.snapshot.tasks,
-      artifacts: data.snapshot.artifacts,
+      project: typed.snapshot.project,
+      agents: typed.snapshot.agents,
+      tasks: typed.snapshot.tasks,
+      artifacts: typed.snapshot.artifacts,
       lastError: null,
     });
 
-    get().joinProject(data.project.id);
+    get().joinProject(typed.project.id);
   },
 
   selectDepartment: (department) => {
     set({ selectedDepartment: department });
+  },
+
+  setHoveredDepartment: (department) => {
+    set({ hoveredDepartment: department });
   },
 
   approveTask: async (taskId: string) => {
@@ -316,14 +385,10 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => ({
     if (!socket || !project) return;
 
     await new Promise<void>((resolve, reject) => {
-      socket.emit(
-        'APPROVE_TASK',
-        { projectId: project.id, taskId },
-        (res) => {
-          if (res?.ok) resolve();
-          else reject(new Error(res?.error ?? 'Erro ao aprovar tarefa'));
-        }
-      );
+      socket.emit('APPROVE_TASK', { projectId: project.id, taskId }, (res) => {
+        if (res?.ok) resolve();
+        else reject(new Error(res?.error ?? 'Erro ao aprovar entrega'));
+      });
     });
   },
 
@@ -337,7 +402,7 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => ({
         { projectId: project.id, taskId, feedback },
         (res) => {
           if (res?.ok) resolve();
-          else reject(new Error(res?.error ?? 'Erro ao reprovar tarefa'));
+          else reject(new Error(res?.error ?? 'Erro ao solicitar ajuste'));
         }
       );
     });
@@ -348,16 +413,14 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => ({
     if (!socket || !project) return;
 
     await new Promise<void>((resolve, reject) => {
-      socket.emit(
-        'PAUSE_PROJECT',
-        { projectId: project.id, reason },
-        (res) => {
-          if (res?.ok) resolve();
-          else reject(new Error(res?.error ?? 'Erro ao pausar projeto'));
-        }
-      );
+      socket.emit('PAUSE_PROJECT', { projectId: project.id, reason }, (res) => {
+        if (res?.ok) resolve();
+        else reject(new Error(res?.error ?? 'Erro ao pausar projeto'));
+      });
     });
   },
+
+  clearError: () => set({ lastError: null }),
 
   pruneExpiredHandoffs: (now: number) => {
     const current = get().activeHandoffs;
