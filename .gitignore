@@ -1,0 +1,22 @@
+# Dependências
+node_modules/
+npm-debug.log*
+
+# Banco de dados PostgreSQL embarcado (PGlite)
+backend/.pgdata/
+
+# Build / Dist
+dist/
+build/
+*.tsbuildinfo
+
+# Variáveis de ambiente locais
+.env
+.env.local
+.env.*.local
+
+# Sistema Operacional / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

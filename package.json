@@ -1,0 +1,20 @@
+{
+  "name": "ai-office-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Escritório Virtual de Agentes de IA - Sistema Multiagente Hierárquico Determinístico",
+  "workspaces": [
+    "shared",
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "build:shared": "npm run build --workspace=@ai-office/shared",
+    "dev:backend": "npm run dev --workspace=@ai-office/backend",
+    "dev:frontend": "npm run dev --workspace=@ai-office/frontend",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
