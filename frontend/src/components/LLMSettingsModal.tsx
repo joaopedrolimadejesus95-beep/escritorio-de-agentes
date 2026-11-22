@@ -6,9 +6,15 @@ import {
 } from '../store/useOfficeStore.js';
 
 const DEFAULT_MODELS: Record<LLMProviderType, string> = {
-  gemini: 'gemini-2.5-flash',
+  gemini: 'gemini-3.8-flash',
   openai: 'gpt-4o-mini',
   ollama: 'llama3.1',
+};
+
+const SUGGESTED_MODELS: Record<LLMProviderType, string[]> = {
+  gemini: ['gemini-3.8-flash', 'gemini-4-argon', 'gemini-3.1-pro-preview'],
+  openai: ['gpt-4o-mini', 'gpt-4o'],
+  ollama: ['llama3.1', 'qwen2.5-coder'],
 };
 
 export function LLMSettingsModal() {
@@ -170,6 +176,26 @@ export function LLMSettingsModal() {
               required
               style={inputStyle}
             />
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '6px' }}>
+              {SUGGESTED_MODELS[provider].map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setModel(m)}
+                  style={{
+                    background: model === m ? '#1e293b' : '#070a10',
+                    border: `1px solid ${model === m ? '#38bdf8' : '#1e293b'}`,
+                    color: model === m ? '#f8fafc' : '#94a3b8',
+                    borderRadius: '6px',
+                    padding: '3px 8px',
+                    fontSize: '11px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
           </div>
 
           {provider !== 'ollama' ? (

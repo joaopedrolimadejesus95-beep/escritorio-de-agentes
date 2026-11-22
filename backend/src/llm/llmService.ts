@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -149,9 +150,10 @@ export function resolveActiveLLMConfig(): LLMRuntimeConfig | null {
     };
   }
   if (geminiKey) {
+    const rawModel = process.env.GEMINI_MODEL?.trim() || 'gemini-3.8-flash';
     return {
       provider: 'gemini',
-      model: process.env.GEMINI_MODEL?.trim() || 'gemini-2.5-flash',
+      model: rawModel === 'gemini-2.5-flash' ? 'gemini-3.8-flash' : rawModel,
       apiKey: geminiKey,
     };
   }
@@ -229,56 +231,89 @@ function extractJsonFromText(rawText: string): unknown {
   }
 }
 
+const GEMINI_FALLBACK_CHAIN = [
+  'gemini-3.8-flash',
+  'gemini-3.7-flash',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash',
+  'gemini-flash-latest',
+];
+
 async function invokeProviderRaw(
   config: LLMRuntimeConfig,
   params: LLMJsonCallParams
 ): Promise<{ rawText: string; tokensUsed: number }> {
   if (config.provider === 'gemini') {
     if (!config.apiKey) throw new LLMNotConfiguredError();
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.model}:generateContent?key=${config.apiKey}`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        systemInstruction: {
-          parts: [{ text: params.systemInstruction }],
-        },
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: params.userPrompt }],
-          },
-        ],
-        generationConfig: {
-          temperature: params.temperature ?? 0.25,
-          maxOutputTokens: params.maxTokens ?? 8192,
-          responseMimeType: 'application/json',
-        },
-      }),
-      signal: AbortSignal.timeout(60000),
+    const preferredModel =
+      config.model === 'gemini-2.5-flash' ? 'gemini-3.8-flash' : config.model;
+
+    // Monta lista ordenada começando pelo modelo preferido + fallbacks em caso de 503/429/404
+    const modelCandidates = Array.from(
+      new Set([preferredModel, ...GEMINI_FALLBACK_CHAIN])
+    );
+
+    const ai = new GoogleGenAI({
+      apiKey: config.apiKey,
+      apiVersion: 'v1beta',
+      httpOptions: { timeout: 45000 },
     });
 
-    if (!res.ok) {
-      const errBody = await res.text();
-      throw new Error(`Gemini API HTTP ${res.status}: ${errBody.slice(0, 300)}`);
+    let lastError: unknown = null;
+
+    for (const candidateModel of modelCandidates) {
+      try {
+        const res = await ai.models.generateContent({
+          model: candidateModel,
+          contents: params.userPrompt,
+          config: {
+            systemInstruction: params.systemInstruction,
+            responseMimeType: 'application/json',
+            temperature: params.temperature ?? 0.25,
+            maxOutputTokens: params.maxTokens ?? 8192,
+          },
+        });
+
+        const rawText = res.text?.trim() ?? '';
+        if (!rawText) {
+          throw new Error(`Gemini (${candidateModel}) retornou resposta vazia.`);
+        }
+
+        const totalTokens =
+          res.usageMetadata?.totalTokenCount ??
+          ((res.usageMetadata?.promptTokenCount ?? 0) +
+            (res.usageMetadata?.candidatesTokenCount ?? 0) ||
+            1800);
+
+        if (candidateModel !== preferredModel) {
+          console.log(
+            `[LLM Service] Fallback bem-sucedido: ${preferredModel} -> ${candidateModel}`
+          );
+        }
+
+        return {
+          rawText,
+          tokensUsed: totalTokens,
+        };
+      } catch (err) {
+        lastError = err;
+        const msg = err instanceof Error ? err.message : String(err);
+        const isTransientOrUnavailable =
+          /\b(503|429|404|UNAVAILABLE|RESOURCE_EXHAUSTED|high demand|not found)\b/i.test(
+            msg
+          );
+        if (!isTransientOrUnavailable) {
+          throw err;
+        }
+        console.warn(
+          `[LLM Service] Modelo ${candidateModel} indisponível/sobrecarregado (${msg.slice(0, 90)}). Tentando próximo fallback...`
+        );
+      }
     }
 
-    const json = (await res.json()) as {
-      candidates?: Array<{
-        content?: { parts?: Array<{ text?: string }> };
-      }>;
-      usageMetadata?: { totalTokenCount?: number };
-    };
-
-    const rawText = json.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-    if (!rawText) {
-      throw new Error('Gemini API retornou resposta vazia.');
-    }
-
-    return {
-      rawText,
-      tokensUsed: json.usageMetadata?.totalTokenCount ?? 1800,
-    };
+    throw lastError instanceof Error
+      ? lastError
+      : new Error(String(lastError));
   }
 
   if (config.provider === 'openai') {
