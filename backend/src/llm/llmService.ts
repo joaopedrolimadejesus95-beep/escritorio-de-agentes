@@ -483,7 +483,7 @@ async function invokeProviderRaw(
         system: `${params.systemInstruction}\n\nRetorne EXCLUSIVAMENTE um objeto JSON válido, sem markdown ou texto adicional.`,
         messages: [{ role: 'user', content: params.userPrompt }],
       }),
-      signal: AbortSignal.timeout(90000),
+      signal: AbortSignal.timeout(150000),
     });
 
     if (!res.ok) {

@@ -12,6 +12,10 @@ export interface DepartmentDeskConfig {
   position: [number, number, number];
   rotationY?: number;
   accentColor: string;
+  shirtColor: string;
+  hairColor: string;
+  hasPlant?: boolean;
+  curvedMonitor?: boolean;
 }
 
 export const DEPARTMENT_DESKS: Record<DepartmentId, DepartmentDeskConfig> = {
@@ -19,41 +23,61 @@ export const DEPARTMENT_DESKS: Record<DepartmentId, DepartmentDeskConfig> = {
     department: 'director',
     label: 'Diretor Executivo',
     roleSubtitle: 'Orquestração & DAG Planner',
-    position: [0, 0, -6.2],
+    position: [1.0, 0, -7.2],
+    rotationY: 0,
     accentColor: '#a855f7',
+    shirtColor: '#4c4f5c',
+    hairColor: '#3b2820',
+    hasPlant: true,
   },
   research: {
     department: 'research',
     label: 'Pesquisa de Mercado',
     roleSubtitle: 'Concorrentes, Preços & Dores',
-    position: [-6.4, 0, -0.8],
+    position: [-5.6, 0, -2.0],
+    rotationY: 0.45,
     accentColor: '#38bdf8',
+    shirtColor: '#2c5364',
+    hairColor: '#5c3c28',
+    hasPlant: true,
   },
   engineering: {
     department: 'engineering',
     label: 'Arquitetura & Dados',
     roleSubtitle: 'Stack, Mermaid, SQL & APIs',
-    position: [6.4, 0, -0.8],
+    position: [6.8, 0, -4.0],
+    rotationY: -0.35,
     accentColor: '#10b981',
+    shirtColor: '#2d4a3e',
+    hairColor: '#231f20',
+    hasPlant: true,
   },
   design: {
     department: 'design',
     label: 'Design de Interface',
     roleSubtitle: 'Design System & Telas HTML',
-    position: [-5.0, 0, 5.4],
+    position: [0.8, 0, 3.6],
+    rotationY: 0.25,
     accentColor: '#ec4899',
+    shirtColor: '#7c4d3c',
+    hairColor: '#6f422b',
+    curvedMonitor: true,
   },
   growth: {
     department: 'growth',
     label: 'Estratégia & Growth',
     roleSubtitle: 'GTM, Preços & Aquisição',
-    position: [5.0, 0, 5.4],
+    position: [7.2, 0, 2.8],
+    rotationY: -0.25,
     accentColor: '#f59e0b',
+    shirtColor: '#364152',
+    hairColor: '#4a3222',
+    hasPlant: true,
   },
 };
 
 const VISUAL_STATE_MONITOR_COLORS: Record<AgentVisualState, string> = {
-  idle: '#64b5b0',
+  idle: '#60a5fa',
   thinking: '#38bdf8',
   working: '#22c55e',
   validating: '#a855f7',
@@ -70,40 +94,51 @@ const VISUAL_STATE_BADGE_LABELS: Record<AgentVisualState, string> = {
   error: 'Erro',
 };
 
-function PottedPlant({ position }: { position: [number, number, number] }) {
+export function StudioPlanter({
+  position,
+  scale = 1,
+}: {
+  position: [number, number, number];
+  scale?: number;
+}) {
   return (
-    <group position={position}>
-      {/* Sombra suave no piso */}
-      <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[0.34, 20]} />
-        <meshBasicMaterial color="#0b1d26" transparent opacity={0.35} />
+    <group position={position} scale={scale}>
+      {/* Sombra de contato no piso claro */}
+      <mesh position={[0, 0.008, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[0.42, 24]} />
+        <meshBasicMaterial color="#1f2937" transparent opacity={0.18} />
       </mesh>
-      {/* Vaso de cerâmica claro */}
-      <mesh position={[0, 0.24, 0]} castShadow receiveShadow>
-        <cylinderGeometry args={[0.24, 0.17, 0.48, 18]} />
-        <meshStandardMaterial color="#e2e8f0" roughness={0.65} />
+      {/* Vaso de cerâmica fosco areia/cinza claro */}
+      <mesh position={[0, 0.3, 0]} castShadow receiveShadow>
+        <cylinderGeometry args={[0.29, 0.22, 0.6, 20]} />
+        <meshStandardMaterial color="#d4cec4" roughness={0.78} />
       </mesh>
-      {/* Terra */}
-      <mesh position={[0, 0.45, 0]}>
-        <cylinderGeometry args={[0.21, 0.21, 0.05, 16]} />
-        <meshStandardMaterial color="#78350f" roughness={0.95} />
+      {/* Terra escura */}
+      <mesh position={[0, 0.57, 0]}>
+        <cylinderGeometry args={[0.25, 0.25, 0.05, 18]} />
+        <meshStandardMaterial color="#4a3121" roughness={0.95} />
       </mesh>
-      {/* Folhas estilizadas */}
+      {/* Tronco e folhagem cheia em camadas */}
+      <mesh position={[0, 0.78, 0]} castShadow>
+        <cylinderGeometry args={[0.025, 0.04, 0.48, 8]} />
+        <meshStandardMaterial color="#5c4033" roughness={0.9} />
+      </mesh>
       {[
-        { pos: [0, 0.72, 0], rot: [0.15, 0, 0.1], scale: [0.22, 0.34, 0.05], color: '#16a34a' },
-        { pos: [-0.14, 0.65, 0.08], rot: [0.35, 0.5, 0.4], scale: [0.19, 0.28, 0.05], color: '#22c55e' },
-        { pos: [0.15, 0.68, -0.05], rot: [-0.25, -0.4, -0.45], scale: [0.2, 0.3, 0.05], color: '#15803d' },
-        { pos: [0.02, 0.64, 0.14], rot: [0.5, 0.1, -0.15], scale: [0.18, 0.26, 0.05], color: '#22c55e' },
+        { pos: [0, 1.12, 0], rot: [0.15, 0.2, 0.1], s: [0.28, 0.42, 0.06], c: '#48763d' },
+        { pos: [-0.2, 0.98, 0.1], rot: [0.35, 0.5, 0.55], s: [0.24, 0.35, 0.06], c: '#3b6431' },
+        { pos: [0.22, 1.02, -0.08], rot: [-0.25, -0.4, -0.5], s: [0.26, 0.38, 0.06], c: '#548746' },
+        { pos: [0.05, 0.92, 0.22], rot: [0.55, 0.1, -0.2], s: [0.22, 0.34, 0.06], c: '#3e6a34' },
+        { pos: [-0.08, 0.95, -0.2], rot: [-0.5, -0.2, 0.25], s: [0.22, 0.33, 0.06], c: '#4f7d42' },
       ].map((leaf, i) => (
         <mesh
           key={i}
           position={leaf.pos as [number, number, number]}
           rotation={leaf.rot as [number, number, number]}
-          scale={leaf.scale as [number, number, number]}
+          scale={leaf.s as [number, number, number]}
           castShadow
         >
           <sphereGeometry args={[1, 10, 10]} />
-          <meshStandardMaterial color={leaf.color} roughness={0.6} />
+          <meshStandardMaterial color={leaf.c} roughness={0.62} />
         </mesh>
       ))}
     </group>
@@ -150,7 +185,7 @@ export function AgentDesk({ config }: AgentDeskProps) {
     }
 
     if (hoverRingMatRef.current) {
-      const targetOpacity = activeSel ? 0.9 : activeHover ? 0.65 : 0.08;
+      const targetOpacity = activeSel ? 0.92 : activeHover ? 0.65 : 0.08;
       hoverRingMatRef.current.opacity = THREE.MathUtils.lerp(
         hoverRingMatRef.current.opacity,
         targetOpacity,
@@ -158,7 +193,6 @@ export function AgentDesk({ config }: AgentDeskProps) {
       );
     }
 
-    // Animação do Boneco sentado na cadeira ergonômica
     if (
       agentGroupRef.current &&
       headRef.current &&
@@ -166,29 +200,29 @@ export function AgentDesk({ config }: AgentDeskProps) {
       rightArmRef.current
     ) {
       if (vState === 'idle') {
-        agentGroupRef.current.position.y = 0.68 + Math.sin(t * 2) * 0.02;
+        agentGroupRef.current.position.y = 0.68 + Math.sin(t * 2) * 0.015;
         headRef.current.rotation.y = Math.sin(t * 0.7) * 0.14;
-        leftArmRef.current.rotation.x = -0.5;
-        rightArmRef.current.rotation.x = -0.5;
+        leftArmRef.current.rotation.x = -0.52;
+        rightArmRef.current.rotation.x = -0.52;
       } else if (vState === 'thinking') {
-        agentGroupRef.current.position.y = 0.7 + Math.sin(t * 3.5) * 0.03;
+        agentGroupRef.current.position.y = 0.7 + Math.sin(t * 3.5) * 0.025;
         headRef.current.rotation.y = Math.sin(t * 2.4) * 0.28;
         leftArmRef.current.rotation.x = -0.75 + Math.sin(t * 4) * 0.1;
         rightArmRef.current.rotation.x = -1.1;
       } else if (vState === 'working') {
         agentGroupRef.current.position.y =
-          0.69 + Math.abs(Math.sin(t * 8)) * 0.025;
+          0.69 + Math.abs(Math.sin(t * 8)) * 0.022;
         headRef.current.rotation.y = Math.sin(t * 5) * 0.08;
         leftArmRef.current.rotation.x = -0.95 + Math.sin(t * 16) * 0.2;
         rightArmRef.current.rotation.x = -0.95 + Math.cos(t * 16) * 0.2;
       } else if (vState === 'validating') {
-        agentGroupRef.current.position.y = 0.71 + Math.sin(t * 5) * 0.025;
+        agentGroupRef.current.position.y = 0.71 + Math.sin(t * 5) * 0.022;
         headRef.current.rotation.y = Math.sin(t * 4) * 0.2;
         leftArmRef.current.rotation.x = -0.85;
         rightArmRef.current.rotation.x = -0.85;
       } else if (vState === 'awaiting_approval') {
         agentGroupRef.current.position.y =
-          0.74 + Math.abs(Math.sin(t * 4.5)) * 0.08;
+          0.74 + Math.abs(Math.sin(t * 4.5)) * 0.07;
         headRef.current.rotation.y = 0;
         leftArmRef.current.rotation.x = -2.3 + Math.sin(t * 7) * 0.25;
         rightArmRef.current.rotation.x = -2.3 - Math.sin(t * 7) * 0.25;
@@ -206,10 +240,10 @@ export function AgentDesk({ config }: AgentDeskProps) {
       monitorScreenMatRef.current.emissive.set(targetHex);
       monitorScreenMatRef.current.emissiveIntensity =
         vState === 'idle'
-          ? 0.35
+          ? 0.45
           : vState === 'awaiting_approval' || vState === 'error'
-            ? 1.1 + Math.sin(t * 7) * 0.4
-            : 0.75 + Math.sin(t * 4.5) * 0.2;
+            ? 1.15 + Math.sin(t * 7) * 0.4
+            : 0.8 + Math.sin(t * 4.5) * 0.2;
     }
 
     if (alertBeaconRef.current) {
@@ -224,6 +258,7 @@ export function AgentDesk({ config }: AgentDeskProps) {
     <group
       ref={rootGroupRef}
       position={config.position}
+      rotation={[0, config.rotationY ?? 0, 0]}
       onClick={(e) => {
         e.stopPropagation();
         selectDepartment(config.department);
@@ -241,9 +276,9 @@ export function AgentDesk({ config }: AgentDeskProps) {
         document.body.style.cursor = 'default';
       }}
     >
-      {/* Anel de Seleção/Hover Sutil no Piso */}
-      <mesh position={[0, 0.015, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[2.3, 2.46, 48]} />
+      {/* Anel discreto de seleção/hover no piso de concreto */}
+      <mesh position={[0, 0.014, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[2.15, 2.3, 48]} />
         <meshStandardMaterial
           ref={hoverRingMatRef}
           color={config.accentColor}
@@ -254,265 +289,234 @@ export function AgentDesk({ config }: AgentDeskProps) {
         />
       </mesh>
 
-      {/* Tapete acolhedor da baia */}
+      {/* Tapete cinza quente minimalista sob a mesa */}
       <RoundedBox
-        args={[3.7, 0.04, 3.1]}
-        radius={0.02}
-        position={[0, 0.02, 0]}
+        args={[3.35, 0.024, 2.95]}
+        radius={0.015}
+        position={[0, 0.012, 0]}
         receiveShadow
       >
         <meshStandardMaterial
-          color={isSelected ? '#233b4d' : isHovered ? '#1d3342' : '#172b38'}
-          roughness={0.85}
+          color={isSelected ? '#9e978b' : isHovered ? '#aba498' : '#b8b0a3'}
+          roughness={0.92}
         />
       </RoundedBox>
 
-      {/* Friso frontal identificador da estação */}
-      <mesh position={[0, 0.045, 1.5]}>
-        <boxGeometry args={[3.4, 0.02, 0.06]} />
-        <meshStandardMaterial
-          color={config.accentColor}
-          emissive={config.accentColor}
-          emissiveIntensity={isSelected || isHovered ? 1.4 : 0.65}
-        />
-      </mesh>
-
-      {/* Divisória / Painel Acústico lateral-traseiro com Post-its (inspirado na referência) */}
-      <group position={[-1.45, 1.0, 0.15]}>
-        <RoundedBox args={[0.1, 1.85, 2.0]} radius={0.03} castShadow receiveShadow>
-          <meshStandardMaterial color="#2c7da0" roughness={0.75} />
-        </RoundedBox>
-        {/* Post-its coloridos no painel */}
-        <mesh position={[0.056, 0.42, -0.35]}>
-          <boxGeometry args={[0.01, 0.2, 0.2]} />
-          <meshStandardMaterial color="#facc15" roughness={0.6} />
+      {/* Divisória acústica moderna translúcida (vidro fosco + moldura aço preto) */}
+      <group position={[0, 1.12, 0.88]}>
+        <mesh castShadow>
+          <boxGeometry args={[2.55, 0.72, 0.04]} />
+          <meshStandardMaterial
+            color="#cbd5e1"
+            transparent
+            opacity={0.42}
+            roughness={0.25}
+          />
         </mesh>
-        <mesh position={[0.056, 0.25, 0.05]}>
-          <boxGeometry args={[0.01, 0.2, 0.2]} />
-          <meshStandardMaterial color="#fb7185" roughness={0.6} />
+        {/* Borda superior & suportes metálicos pretos */}
+        <mesh position={[0, 0.37, 0]}>
+          <boxGeometry args={[2.58, 0.04, 0.06]} />
+          <meshStandardMaterial color="#181c24" roughness={0.5} />
         </mesh>
-        <mesh position={[0.056, 0.5, 0.38]}>
-          <boxGeometry args={[0.01, 0.18, 0.18]} />
-          <meshStandardMaterial color="#fde047" roughness={0.6} />
-        </mesh>
+        {[-1.26, 1.26].map((px, idx) => (
+          <mesh key={idx} position={[px, -0.18, 0]}>
+            <boxGeometry args={[0.05, 1.12, 0.06]} />
+            <meshStandardMaterial color="#181c24" roughness={0.5} />
+          </mesh>
+        ))}
       </group>
 
-      {/* MESA DE MADEIRA QUENTE + GAVETEIRO DE 3 GAVETAS */}
-      <group position={[0, 0, 0.3]}>
-        {/* Tampo de madeira quente */}
+      {/* MESA DE CARVALHO CLARO COM ESTRUTURA DE AÇO PRETO */}
+      <group position={[0, 0, 0.25]}>
+        {/* Tampo de carvalho quente */}
         <RoundedBox
-          args={[2.5, 0.1, 1.25]}
-          radius={0.04}
-          position={[0, 0.78, 0]}
+          args={[2.6, 0.08, 1.26]}
+          radius={0.025}
+          position={[0, 0.76, 0]}
           castShadow
           receiveShadow
         >
-          <meshStandardMaterial color="#c85a32" roughness={0.55} />
+          <meshStandardMaterial color="#c99563" roughness={0.55} />
         </RoundedBox>
 
-        {/* Pés esquerdos da mesa */}
+        {/* Estrutura metálica preta minimalista */}
         {[
-          [-1.12, 0.39, -0.48],
-          [-1.12, 0.39, 0.48],
+          [-1.2, 0.37, -0.54],
+          [-1.2, 0.37, 0.54],
+          [1.2, 0.37, -0.54],
+          [1.2, 0.37, 0.54],
         ].map((legPos, idx) => (
           <mesh key={idx} position={legPos as [number, number, number]} castShadow>
-            <boxGeometry args={[0.08, 0.76, 0.08]} />
-            <meshStandardMaterial color="#b24d28" roughness={0.6} />
+            <boxGeometry args={[0.06, 0.74, 0.06]} />
+            <meshStandardMaterial color="#181c24" metalness={0.35} roughness={0.5} />
           </mesh>
         ))}
 
-        {/* Gaveteiro direito com 3 gavetas */}
-        <group position={[0.82, 0.38, 0]}>
-          <RoundedBox args={[0.74, 0.74, 1.06]} radius={0.02} castShadow receiveShadow>
-            <meshStandardMaterial color="#b24d28" roughness={0.6} />
+        {/* Gaveteiro compacto escuro sob o lado direito */}
+        <group position={[0.84, 0.36, 0]}>
+          <RoundedBox args={[0.66, 0.68, 1.02]} radius={0.02} castShadow receiveShadow>
+            <meshStandardMaterial color="#272c36" roughness={0.65} />
           </RoundedBox>
-          {[0.21, 0, -0.21].map((yOff, i) => (
-            <group key={i} position={[0, yOff, -0.535]}>
-              <mesh>
-                <boxGeometry args={[0.62, 0.18, 0.02]} />
-                <meshStandardMaterial color="#d97043" roughness={0.55} />
-              </mesh>
-              {/* Puxador dourado */}
-              <mesh position={[0, 0, -0.02]}>
-                <boxGeometry args={[0.16, 0.025, 0.025]} />
-                <meshStandardMaterial color="#fbbf24" metalness={0.3} roughness={0.4} />
-              </mesh>
-            </group>
+          {[0.18, 0, -0.18].map((yOff, i) => (
+            <mesh key={i} position={[0, yOff, -0.52]}>
+              <boxGeometry args={[0.56, 0.14, 0.015]} />
+              <meshStandardMaterial color="#343b48" roughness={0.55} />
+            </mesh>
           ))}
         </group>
 
-        {/* OBJETOS ACIMA DA MESA */}
-        {/* 1. Monitor Widescreen Prateado */}
-        <group position={[-0.1, 1.18, 0.25]}>
-          <mesh position={[0, -0.28, 0]} castShadow>
-            <boxGeometry args={[0.14, 0.24, 0.08]} />
-            <meshStandardMaterial color="#cbd5e1" metalness={0.3} roughness={0.4} />
+        {/* Desk mat preto + Teclado & Mouse */}
+        <mesh position={[-0.18, 0.804, -0.14]} receiveShadow>
+          <boxGeometry args={[1.05, 0.008, 0.52]} />
+          <meshStandardMaterial color="#1e222a" roughness={0.85} />
+        </mesh>
+        <mesh position={[-0.24, 0.818, -0.16]} castShadow>
+          <boxGeometry args={[0.52, 0.02, 0.18]} />
+          <meshStandardMaterial color="#d1d5db" roughness={0.45} />
+        </mesh>
+        <RoundedBox args={[0.09, 0.025, 0.13]} radius={0.012} position={[0.16, 0.818, -0.16]} castShadow>
+          <meshStandardMaterial color="#d1d5db" roughness={0.45} />
+        </RoundedBox>
+
+        {/* Monitor Widescreen ou Ultrawide Curvo */}
+        <group position={[-0.14, 1.15, 0.25]}>
+          <mesh position={[0, -0.26, 0.02]} castShadow>
+            <boxGeometry args={[0.11, 0.24, 0.06]} />
+            <meshStandardMaterial color="#1f242d" metalness={0.4} roughness={0.4} />
           </mesh>
-          <mesh position={[0, -0.34, -0.02]} castShadow>
-            <boxGeometry args={[0.38, 0.03, 0.24]} />
-            <meshStandardMaterial color="#e2e8f0" metalness={0.25} roughness={0.4} />
+          <mesh position={[0, -0.34, 0]} castShadow>
+            <boxGeometry args={[0.38, 0.025, 0.22]} />
+            <meshStandardMaterial color="#1f242d" metalness={0.4} roughness={0.4} />
           </mesh>
-          <RoundedBox args={[1.18, 0.68, 0.06]} radius={0.02} castShadow>
-            <meshStandardMaterial color="#f1f5f9" roughness={0.35} />
+          <RoundedBox
+            args={[config.curvedMonitor ? 1.48 : 1.2, 0.66, 0.05]}
+            radius={0.02}
+            castShadow
+          >
+            <meshStandardMaterial color="#181b22" roughness={0.35} />
           </RoundedBox>
-          <mesh position={[0, 0, -0.035]}>
-            <planeGeometry args={[1.08, 0.58]} />
+          <mesh position={[0, 0, -0.028]}>
+            <planeGeometry args={[config.curvedMonitor ? 1.38 : 1.1, 0.58]} />
             <meshStandardMaterial
               ref={monitorScreenMatRef}
               color={monitorColor}
               emissive={monitorColor}
-              emissiveIntensity={0.6}
+              emissiveIntensity={0.65}
               side={THREE.DoubleSide}
             />
           </mesh>
-          <mesh position={[0, 0, 0.035]}>
-            <planeGeometry args={[1.08, 0.58]} />
+          <mesh position={[0, 0, 0.028]}>
+            <planeGeometry args={[config.curvedMonitor ? 1.38 : 1.1, 0.58]} />
             <meshStandardMaterial
               color={monitorColor}
               emissive={monitorColor}
-              emissiveIntensity={0.6}
+              emissiveIntensity={0.55}
             />
           </mesh>
         </group>
 
-        {/* 2. Teclado & Mouse claros */}
-        <mesh position={[-0.18, 0.84, -0.15]} castShadow>
-          <boxGeometry args={[0.56, 0.025, 0.2]} />
-          <meshStandardMaterial color="#e2e8f0" roughness={0.5} />
-        </mesh>
-        <RoundedBox args={[0.1, 0.03, 0.14]} radius={0.015} position={[0.22, 0.845, -0.15]} castShadow>
-          <meshStandardMaterial color="#e2e8f0" roughness={0.45} />
-        </RoundedBox>
-
-        {/* 3. Caixinhas de som laterais */}
-        <RoundedBox args={[0.14, 0.18, 0.14]} radius={0.02} position={[-0.84, 0.92, 0.2]} castShadow>
-          <meshStandardMaterial color="#cbd5e1" roughness={0.5} />
-        </RoundedBox>
-        <RoundedBox args={[0.14, 0.18, 0.14]} radius={0.02} position={[0.64, 0.92, 0.2]} castShadow>
-          <meshStandardMaterial color="#cbd5e1" roughness={0.5} />
-        </RoundedBox>
-
-        {/* 4. Caderno azul/accent e copo de café quente */}
-        <RoundedBox
-          args={[0.28, 0.04, 0.36]}
-          radius={0.01}
-          position={[0.62, 0.85, -0.22]}
-          rotation={[0, 0.2, 0]}
-          castShadow
-        >
-          <meshStandardMaterial color="#0284c7" roughness={0.6} />
-        </RoundedBox>
-
-        {/* Copo de café */}
-        <group position={[0.98, 0.93, 0.12]}>
+        {/* Caneca de café e caderno na mesa */}
+        <group position={[0.78, 0.86, -0.12]}>
           <mesh castShadow>
-            <cylinderGeometry args={[0.075, 0.06, 0.18, 14]} />
-            <meshStandardMaterial color="#fef3c7" roughness={0.5} />
+            <cylinderGeometry args={[0.065, 0.055, 0.14, 14]} />
+            <meshStandardMaterial color="#f5f0e6" roughness={0.45} />
           </mesh>
-          <mesh position={[0, 0.095, 0]}>
-            <cylinderGeometry args={[0.08, 0.08, 0.03, 14]} />
-            <meshStandardMaterial color="#78350f" roughness={0.6} />
+          <mesh position={[0, 0.065, 0]}>
+            <cylinderGeometry args={[0.055, 0.055, 0.015, 14]} />
+            <meshStandardMaterial color="#4a2c18" roughness={0.5} />
           </mesh>
         </group>
-
-        {/* Lápis na mesa */}
-        <mesh position={[-0.78, 0.84, -0.18]} rotation={[0, 0.4, Math.PI / 2]}>
-          <cylinderGeometry args={[0.012, 0.012, 0.26, 8]} />
-          <meshStandardMaterial color="#facc15" />
-        </mesh>
-        <mesh position={[-0.74, 0.84, -0.22]} rotation={[0, 0.55, Math.PI / 2]}>
-          <cylinderGeometry args={[0.012, 0.012, 0.24, 8]} />
-          <meshStandardMaterial color="#38bdf8" />
-        </mesh>
+        <RoundedBox
+          args={[0.28, 0.025, 0.36]}
+          radius={0.008}
+          position={[-0.92, 0.815, -0.18]}
+          rotation={[0, 0.18, 0]}
+          castShadow
+        >
+          <meshStandardMaterial color="#3b4252" roughness={0.7} />
+        </RoundedBox>
       </group>
 
-      {/* CADEIRA GIRATÓRIA ERGONÔMICA COM RODINHAS */}
-      <group position={[-0.1, 0, -0.72]}>
-        {/* Pistão central */}
-        <mesh position={[0, 0.26, 0]} castShadow>
-          <cylinderGeometry args={[0.045, 0.055, 0.38, 12]} />
-          <meshStandardMaterial color="#cbd5e1" metalness={0.4} roughness={0.35} />
+      {/* CADEIRA DE ESCRITÓRIO MODERNA + RODÍZIOS */}
+      <group position={[-0.14, 0, -0.72]}>
+        <mesh position={[0, 0.25, 0]} castShadow>
+          <cylinderGeometry args={[0.042, 0.052, 0.36, 12]} />
+          <meshStandardMaterial color="#1c2028" metalness={0.5} roughness={0.35} />
         </mesh>
-        {/* Base estrela com 4 pés e rodízios */}
-        {[0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2].map((ang, i) => (
+        {[0, 1.256, 2.513, 3.77, 5.026].map((ang, i) => (
           <group key={i} rotation={[0, ang, 0]}>
-            <mesh position={[0.18, 0.09, 0]} rotation={[0, 0, -0.15]}>
-              <boxGeometry args={[0.36, 0.04, 0.05]} />
-              <meshStandardMaterial color="#cbd5e1" metalness={0.3} roughness={0.4} />
+            <mesh position={[0.18, 0.08, 0]} rotation={[0, 0, -0.12]}>
+              <boxGeometry args={[0.35, 0.035, 0.045]} />
+              <meshStandardMaterial color="#1c2028" metalness={0.45} roughness={0.4} />
             </mesh>
-            <mesh position={[0.34, 0.05, 0]}>
-              <sphereGeometry args={[0.05, 10, 10]} />
-              <meshStandardMaterial color="#0f172a" roughness={0.6} />
+            <mesh position={[0.34, 0.045, 0]}>
+              <sphereGeometry args={[0.045, 10, 10]} />
+              <meshStandardMaterial color="#0b0d12" roughness={0.6} />
             </mesh>
           </group>
         ))}
-        {/* Assento acolchoado */}
-        <RoundedBox args={[0.64, 0.1, 0.6]} radius={0.04} position={[0, 0.46, 0]} castShadow>
-          <meshStandardMaterial color="#182235" roughness={0.75} />
+        <RoundedBox args={[0.62, 0.09, 0.58]} radius={0.035} position={[0, 0.45, 0]} castShadow>
+          <meshStandardMaterial color="#2a2f3a" roughness={0.8} />
         </RoundedBox>
-        {/* Suporte e encosto */}
-        <mesh position={[0, 0.68, -0.28]}>
-          <boxGeometry args={[0.12, 0.42, 0.04]} />
-          <meshStandardMaterial color="#cbd5e1" metalness={0.3} />
+        <mesh position={[0, 0.66, -0.26]}>
+          <boxGeometry args={[0.12, 0.4, 0.04]} />
+          <meshStandardMaterial color="#1c2028" metalness={0.4} />
         </mesh>
-        <RoundedBox args={[0.6, 0.56, 0.1]} radius={0.04} position={[0, 0.85, -0.28]} castShadow>
-          <meshStandardMaterial color="#182235" roughness={0.75} />
+        <RoundedBox args={[0.58, 0.54, 0.09]} radius={0.04} position={[0, 0.84, -0.26]} castShadow>
+          <meshStandardMaterial color="#2a2f3a" roughness={0.8} />
         </RoundedBox>
       </group>
 
-      {/* BONECO LOW-POLY SENTADO NA CADEIRA */}
-      <group ref={agentGroupRef} position={[-0.1, 0.68, -0.68]}>
+      {/* PERSONAGEM ESTILIZADO SENTADO */}
+      <group ref={agentGroupRef} position={[-0.14, 0.68, -0.68]}>
         <RoundedBox
-          args={[0.48, 0.62, 0.32]}
-          radius={0.11}
+          args={[0.46, 0.58, 0.3]}
+          radius={0.1}
           position={[0, 0.2, 0]}
           castShadow
         >
-          <meshStandardMaterial color={config.accentColor} roughness={0.4} />
+          <meshStandardMaterial color={config.shirtColor} roughness={0.55} />
         </RoundedBox>
 
-        <mesh ref={headRef} position={[0, 0.74, 0.02]} castShadow>
-          <sphereGeometry args={[0.24, 20, 20]} />
-          <meshStandardMaterial color="#f8fafc" roughness={0.35} />
-          <mesh position={[0, 0.02, 0.2]}>
-            <boxGeometry args={[0.26, 0.08, 0.05]} />
-            <meshStandardMaterial
-              color={monitorColor}
-              emissive={monitorColor}
-              emissiveIntensity={1.0}
-            />
+        <mesh ref={headRef} position={[0, 0.72, 0.02]} castShadow>
+          <sphereGeometry args={[0.21, 20, 20]} />
+          <meshStandardMaterial color="#f1d2b6" roughness={0.45} />
+          {/* Cabelo estilizado no topo/nuca */}
+          <mesh position={[0, 0.09, -0.04]}>
+            <sphereGeometry args={[0.215, 16, 16, 0, Math.PI * 2, 0, Math.PI * 0.62]} />
+            <meshStandardMaterial color={config.hairColor} roughness={0.6} />
           </mesh>
         </mesh>
 
         <mesh
           ref={leftArmRef}
-          position={[-0.33, 0.3, 0.14]}
+          position={[-0.3, 0.3, 0.14]}
           rotation={[-0.5, 0, 0]}
           castShadow
         >
-          <capsuleGeometry args={[0.075, 0.32, 8, 12]} />
-          <meshStandardMaterial color={config.accentColor} />
+          <capsuleGeometry args={[0.07, 0.3, 8, 12]} />
+          <meshStandardMaterial color={config.shirtColor} roughness={0.55} />
         </mesh>
 
         <mesh
           ref={rightArmRef}
-          position={[0.33, 0.3, 0.14]}
+          position={[0.3, 0.3, 0.14]}
           rotation={[-0.5, 0, 0]}
           castShadow
         >
-          <capsuleGeometry args={[0.075, 0.32, 8, 12]} />
-          <meshStandardMaterial color={config.accentColor} />
+          <capsuleGeometry args={[0.07, 0.3, 8, 12]} />
+          <meshStandardMaterial color={config.shirtColor} roughness={0.55} />
         </mesh>
       </group>
 
-      {/* Vaso de planta verde aconchegante ao lado da mesa */}
-      <PottedPlant position={[1.58, 0, 0.35]} />
+      {/* Planta verde opcional junto à estação */}
+      {config.hasPlant && <StudioPlanter position={[1.7, 0, 0.45]} scale={0.8} />}
 
       {/* Beacon 3D de Revisão ou Erro */}
       {(agentState.visualState === 'awaiting_approval' ||
         agentState.visualState === 'error') && (
-        <mesh ref={alertBeaconRef} position={[-0.1, 2.42, -0.68]}>
-          <octahedronGeometry args={[0.19, 0]} />
+        <mesh ref={alertBeaconRef} position={[-0.14, 2.42, -0.68]}>
+          <octahedronGeometry args={[0.18, 0]} />
           <meshStandardMaterial
             color={
               agentState.visualState === 'awaiting_approval'
@@ -530,7 +534,7 @@ export function AgentDesk({ config }: AgentDeskProps) {
       )}
 
       {/* Card Sóbrio Suspenso */}
-      <Html position={[0, 2.75, -0.2]} center zIndexRange={[10, 0]}>
+      <Html position={[0, 2.65, -0.15]} center zIndexRange={[10, 0]}>
         <div
           onClick={(e) => {
             e.stopPropagation();
@@ -547,19 +551,20 @@ export function AgentDesk({ config }: AgentDeskProps) {
           style={{
             cursor: 'pointer',
             background: isSelected
-              ? 'rgba(15, 23, 42, 0.96)'
-              : 'rgba(9, 13, 20, 0.92)',
+              ? 'rgba(13, 18, 28, 0.96)'
+              : 'rgba(10, 14, 22, 0.9)',
             border: `1px solid ${
-              isSelected || isHovered ? config.accentColor : '#1e293b'
+              isSelected || isHovered ? config.accentColor : 'rgba(255,255,255,0.12)'
             }`,
             borderRadius: '10px',
-            padding: '7px 11px',
-            minWidth: '175px',
-            maxWidth: '220px',
+            padding: '6px 10px',
+            minWidth: '170px',
+            maxWidth: '215px',
+            backdropFilter: 'blur(8px)',
             boxShadow:
               isSelected || isHovered
                 ? `0 8px 24px rgba(0,0,0,0.55), 0 0 0 1px ${config.accentColor}40`
-                : '0 6px 16px rgba(0,0,0,0.45)',
+                : '0 6px 18px rgba(0,0,0,0.45)',
             color: '#f8fafc',
             fontSize: '11px',
             userSelect: 'none',
@@ -572,7 +577,7 @@ export function AgentDesk({ config }: AgentDeskProps) {
               alignItems: 'center',
               justifyContent: 'space-between',
               gap: '8px',
-              marginBottom: agentState.statusBubble ? '4px' : '0',
+              marginBottom: agentState.statusBubble ? '3px' : '0',
             }}
           >
             <span
@@ -619,7 +624,7 @@ export function AgentDesk({ config }: AgentDeskProps) {
             <div
               style={{
                 color: '#94a3b8',
-                fontSize: '10.5px',
+                fontSize: '10px',
                 lineHeight: 1.35,
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
