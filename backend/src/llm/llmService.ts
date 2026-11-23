@@ -364,7 +364,7 @@ export interface LLMJsonCallResult<T> {
 
 function extractJsonFromText(rawText: string): unknown {
   const trimmed = rawText.trim();
-  const fenceMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
   const candidate = fenceMatch?.[1]?.trim() || trimmed;
 
   try {
@@ -469,51 +469,123 @@ async function invokeProviderRaw(
   if (config.provider === 'anthropic') {
     if (!config.apiKey) throw new LLMNotConfiguredError();
     const base = config.baseUrl || 'https://api.anthropic.com/v1';
-    const res = await fetch(`${base}/messages`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': config.apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: config.model,
-        max_tokens: params.maxTokens ?? 8192,
-        temperature: params.temperature ?? 0.25,
-        system: `${params.systemInstruction}\n\nRetorne EXCLUSIVAMENTE um objeto JSON válido, sem markdown ou texto adicional.`,
-        messages: [{ role: 'user', content: params.userPrompt }],
-      }),
-      signal: AbortSignal.timeout(150000),
-    });
 
-    if (!res.ok) {
-      const errBody = sanitizeSensitiveText(await res.text());
-      throw new Error(
-        `Anthropic API HTTP ${res.status}: ${errBody.slice(0, 300)}`
-      );
-    }
-
-    const json = (await res.json()) as {
-      content?: Array<{ type?: string; text?: string }>;
-      usage?: { input_tokens?: number; output_tokens?: number };
+    const controller = new AbortController();
+    const totalTimer = setTimeout(() => controller.abort(), 240_000);
+    let idleTimer = setTimeout(() => controller.abort(), 60_000);
+    const resetIdleTimer = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => controller.abort(), 60_000);
     };
 
-    const rawText = (json.content ?? [])
-      .filter((b) => b.type === 'text' && typeof b.text === 'string')
-      .map((b) => b.text)
-      .join('')
-      .trim();
+    try {
+      const res = await fetch(`${base}/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': config.apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: config.model,
+          max_tokens: params.maxTokens ?? 4096,
+          temperature: params.temperature ?? 0.25,
+          stream: true,
+          system: `${params.systemInstruction}\n\nRetorne EXCLUSIVAMENTE um objeto JSON válido, sem markdown ou texto adicional.`,
+          messages: [{ role: 'user', content: params.userPrompt }],
+        }),
+        signal: controller.signal,
+      });
 
-    if (!rawText) {
-      throw new Error('Anthropic API retornou resposta vazia.');
+      if (!res.ok) {
+        const errBody = sanitizeSensitiveText(await res.text());
+        throw new Error(
+          `Anthropic API HTTP ${res.status}: ${errBody.slice(0, 300)}`
+        );
+      }
+
+      if (!res.body) {
+        throw new Error('Anthropic API não retornou stream de resposta.');
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let sseBuffer = '';
+      const textChunks: string[] = [];
+      let inputTokens = 0;
+      let outputTokens = 0;
+
+      while (true) {
+        const { value, done } = await reader.read();
+        resetIdleTimer();
+        if (done) break;
+
+        sseBuffer += decoder.decode(value, { stream: true });
+        const lines = sseBuffer.split(/\r?\n/);
+        sseBuffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          const trimmedLine = line.trim();
+          if (!trimmedLine.startsWith('data:')) continue;
+          const payloadStr = trimmedLine.slice(5).trim();
+          if (!payloadStr || payloadStr === '[DONE]') continue;
+
+          try {
+            const evt = JSON.parse(payloadStr) as {
+              type?: string;
+              message?: { usage?: { input_tokens?: number } };
+              delta?: { type?: string; text?: string };
+              usage?: { output_tokens?: number };
+              error?: { message?: string };
+            };
+
+            if (evt.type === 'error') {
+              throw new Error(
+                evt.error?.message || 'Erro interno no stream da Anthropic.'
+              );
+            }
+            if (evt.type === 'message_start') {
+              inputTokens = evt.message?.usage?.input_tokens ?? inputTokens;
+            } else if (
+              evt.type === 'content_block_delta' &&
+              evt.delta?.type === 'text_delta' &&
+              typeof evt.delta.text === 'string'
+            ) {
+              textChunks.push(evt.delta.text);
+            } else if (evt.type === 'message_delta' && evt.usage) {
+              outputTokens = evt.usage.output_tokens ?? outputTokens;
+            }
+          } catch (parseErr) {
+            if (
+              parseErr instanceof Error &&
+              !parseErr.message.includes('JSON')
+            ) {
+              throw parseErr;
+            }
+          }
+        }
+      }
+
+      const rawText = textChunks.join('').trim();
+      if (!rawText) {
+        throw new Error('Anthropic API retornou resposta vazia.');
+      }
+
+      return {
+        rawText,
+        tokensUsed: inputTokens + outputTokens || 1800,
+      };
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw new Error(
+          'Timeout na comunicação com a Anthropic API (o stream demorou mais que o limite).'
+        );
+      }
+      throw err;
+    } finally {
+      clearTimeout(totalTimer);
+      clearTimeout(idleTimer);
     }
-
-    return {
-      rawText,
-      tokensUsed:
-        (json.usage?.input_tokens ?? 0) + (json.usage?.output_tokens ?? 0) ||
-        1800,
-    };
   }
 
   if (config.provider === 'openai') {

@@ -89,10 +89,25 @@ export class EngineeringPod implements DepartmentPod {
       ? `\n\nFEEDBACK HUMANO OBRIGATÓRIO PARA REVISÃO (Tentativa ${input.task.attempts}):\n"${input.humanFeedback}"\nAplique todas as mudanças solicitadas na arquitetura/SQL/API e documente em "incorporatedFeedbackNotes".`
       : '';
 
+    const compactResearchDeps = input.dependencyArtifacts.map((dep) => {
+      if (dep.department === 'research') {
+        const { liveWebSources: _ignored, ...restContent } = dep.content as Record<
+          string,
+          unknown
+        >;
+        return {
+          department: dep.department,
+          artifactName: dep.artifactName,
+          content: restContent,
+        };
+      }
+      return dep;
+    });
+
     const llmResult = await generateValidatedJson({
       schema: EngineeringArtifactContentSchema,
       temperature: 0.2,
-      maxTokens: 8192,
+      maxTokens: 6144,
       systemInstruction: `Você é um Principal Software Architect Sênior.
 Com base no escopo e no artefato de pesquisa recebido, projete a arquitetura real e completa do sistema.
 
@@ -135,7 +150,7 @@ Regras críticas para o Mermaid e SQL:
 1. "mermaidFlowDiagram" DEVE começar com "flowchart TD" ou "flowchart LR" ou "sequenceDiagram". Sempre coloque textos com espaços ou parênteses entre aspas nos nós, ex: A["Cliente Web"] --> B["API Gateway"]. Nunca use tags HTML (<br/>, etc.) dentro do Mermaid.
 2. "sqlSchema" DEVE conter múltiplas instruções "CREATE TABLE" reais e específicas ao domínio do projeto, usando tipos PostgreSQL válidos.
 3. Não use emojis, TODOs ou placeholders genéricos. Idioma: Português (Brasil).`,
-      userPrompt: `Objetivo:\n${input.task.objective}${feedbackSection}\n\nArtefatos das dependências diretas (Pesquisa):\n${JSON.stringify(input.dependencyArtifacts, null, 2)}\n\nReferências reais GitHub/NPM:\n${JSON.stringify({ github: githubRefs.data.repositories, npm: npmRefs.data.packages }, null, 2)}`,
+      userPrompt: `Objetivo:\n${input.task.objective}${feedbackSection}\n\nArtefatos das dependências diretas (Pesquisa):\n${JSON.stringify(compactResearchDeps, null, 2)}\n\nReferências reais GitHub/NPM:\n${JSON.stringify({ github: githubRefs.data.repositories.slice(0, 3), npm: npmRefs.data.packages.slice(0, 3) }, null, 2)}`,
       extraValidator: (data) => {
         return this.validateArchitectureRules(data, input);
       },

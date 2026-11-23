@@ -132,12 +132,19 @@ export class ResearchPod implements DepartmentPod {
         textExcerpt: string;
       }>('http_fetch_page', {
         url: firstHttpUrl,
-        maxChars: 2200,
+        maxChars: 1400,
       });
       if (pageReport.data.status >= 200 && pageReport.data.status < 400) {
         primaryPageExcerpt = `Página lida (${pageReport.data.url} - ${pageReport.data.title}):\n${pageReport.data.textExcerpt}`;
       }
     }
+
+    const compactSourcesForPrompt = uniqueSources.slice(0, 6).map((s) => ({
+      title: s.title,
+      url: s.url,
+      snippet: s.snippet.slice(0, 220),
+      source: s.source,
+    }));
 
     // 3. Síntese analítica de nível sênior via LLM real com validação Zod + auto-reparo
     const feedbackSection = input.humanFeedback
@@ -147,6 +154,7 @@ export class ResearchPod implements DepartmentPod {
     const llmResult = await generateValidatedJson({
       schema: ResearchArtifactContentSchema,
       temperature: 0.25,
+      maxTokens: 4096,
       systemInstruction: `Você é um Principal Product Researcher e Estrategista de Mercado Sênior.
 Sua missão é produzir uma pesquisa de mercado e produto REAL, profunda, objetiva e específica para o escopo informado — nunca genérica ou com placeholders.
 
@@ -202,7 +210,7 @@ Regras estritas de saída:
   }
 - Nunca use emojis, nunca use TODO/TBD/placeholder, nunca invente nomes genéricos como "Concorrente A". Use concorrentes reais do mercado pertinente ao escopo.
 - Idioma: Português (Brasil).`,
-      userPrompt: `Objetivo da Tarefa:\n${objective}${feedbackSection}\n\nFontes reais coletadas da Web:\n${JSON.stringify(uniqueSources, null, 2)}\n\n${primaryPageExcerpt}`,
+      userPrompt: `Objetivo da Tarefa:\n${objective}${feedbackSection}\n\nFontes reais coletadas da Web:\n${JSON.stringify(compactSourcesForPrompt, null, 2)}\n\n${primaryPageExcerpt}`,
     });
 
     const content: ResearchArtifactContent = {

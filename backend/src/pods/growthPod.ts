@@ -66,9 +66,29 @@ export class GrowthPod implements DepartmentPod {
       ? `\n\nFEEDBACK HUMANO OBRIGATÓRIO PARA REVISÃO:\n"${input.humanFeedback}"\nAjuste os planos/preços/canais e preencha "incorporatedFeedbackNotes".`
       : '';
 
+    const compactDependencies = input.dependencyArtifacts.map((dep) => {
+      if (dep.department === 'design') {
+        const screens = Array.isArray(dep.content.screens)
+          ? dep.content.screens.map((s: any) => `${s.title} (${s.route})`)
+          : [];
+        return {
+          department: dep.department,
+          artifactName: dep.artifactName,
+          designSummary: dep.content.designSummary,
+          screens,
+        };
+      }
+      return {
+        department: dep.department,
+        artifactName: dep.artifactName,
+        content: dep.content,
+      };
+    });
+
     const llmResult = await generateValidatedJson({
       schema: GrowthArtifactContentSchema,
       temperature: 0.25,
+      maxTokens: 4096,
       systemInstruction: `Você é um Head of Growth e Estratégia Comercial Sênior.
 Com base na pesquisa de mercado, arquitetura e design recebidos, elabore um plano de Go-To-Market, precificação e aquisição realista e acionável.
 
@@ -106,7 +126,7 @@ Retorne exclusivamente JSON válido:
 }
 
 Regras: zero emojis, zero placeholders, alinhado ao mercado brasileiro/global do escopo. Idioma: Português (Brasil).`,
-      userPrompt: `Objetivo:\n${input.task.objective}${feedbackSection}\n\nArtefatos anteriores:\n${JSON.stringify(input.dependencyArtifacts, null, 2)}`,
+      userPrompt: `Objetivo:\n${input.task.objective}${feedbackSection}\n\nArtefatos anteriores:\n${JSON.stringify(compactDependencies, null, 2)}`,
     });
 
     const content: GrowthArtifactContent = {
