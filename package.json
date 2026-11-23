@@ -2,6 +2,7 @@
   "name": "ai-office-monorepo",
   "version": "1.0.0",
   "private": true,
+  "license": "MIT",
   "description": "Escritório Virtual de Agentes de IA - Sistema Multiagente Hierárquico Determinístico",
   "workspaces": [
     "shared",

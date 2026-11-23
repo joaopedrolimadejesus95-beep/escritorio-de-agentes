@@ -102,4 +102,4 @@ npx tsx --test backend/src/security/security.test.ts   # testes de segurança/cr
 
 ## Licença
 
-Defina a licença do projeto antes de publicar.
+Distribuído sob a licença **MIT**. Veja o arquivo [LICENSE](LICENSE) para mais detalhes.
