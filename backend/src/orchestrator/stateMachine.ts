@@ -16,7 +16,12 @@ import {
   type ToolCallLogDTO,
 } from '@ai-office/shared';
 import { pool, withTransaction, type DbClient } from '../db/pool.js';
-import { runWithLLMUserContext } from '../llm/llmService.js';
+import {
+  computeRateLimitBackoffMs,
+  isHardQuotaExhausted,
+  isRateLimitError,
+  runWithLLMUserContext,
+} from '../llm/llmService.js';
 import { sanitizeSensitiveText } from '../security/security.js';
 import { DirectorPlanner } from './planner.js';
 import {
@@ -694,6 +699,7 @@ export class OfficeStateMachine extends EventEmitter {
       statusBubble: 'Reiniciando execução do departamento...',
       taskStatus: 'ready',
       attempts: 0,
+      taskError: null,
     });
 
     await this.emitBudgetUpdate(projectId);
@@ -752,7 +758,32 @@ export class OfficeStateMachine extends EventEmitter {
     task: TaskDTO,
     errorMessage: string
   ): Promise<void> {
-    if (task.attempts < task.maxAttempts) {
+    const canRetryAutomatically =
+      task.attempts < task.maxAttempts && !isHardQuotaExhausted(errorMessage);
+
+    if (canRetryAutomatically) {
+      const rateLimited = isRateLimitError(errorMessage);
+      const backoffMs = rateLimited ? computeRateLimitBackoffMs(errorMessage) : 0;
+      const waitSec = Math.ceil(backoffMs / 1000);
+
+      this.updateAgentVisualState({
+        projectId,
+        department: task.department,
+        visualState: 'thinking',
+        activeTaskId: task.id,
+        activeTaskKey: task.taskKey,
+        statusBubble: rateLimited
+          ? `Limite da API (429). Aguardando ${waitSec}s para tentativa ${task.attempts + 1}/${task.maxAttempts}...`
+          : `Tentativa ${task.attempts}/${task.maxAttempts} falhou. Preparando retry...`,
+        taskStatus: 'running',
+        attempts: task.attempts,
+        taskError: errorMessage,
+      });
+
+      if (backoffMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+      }
+
       await pool.query(
         `UPDATE tasks SET status = 'ready', last_error = $1, updated_at = NOW() WHERE id = $2`,
         [errorMessage, task.id]
@@ -764,9 +795,10 @@ export class OfficeStateMachine extends EventEmitter {
         visualState: 'thinking',
         activeTaskId: task.id,
         activeTaskKey: task.taskKey,
-        statusBubble: `Tentativa ${task.attempts}/${task.maxAttempts} falhou. Preparando retry...`,
+        statusBubble: `Retentando (${task.attempts + 1}/${task.maxAttempts})...`,
         taskStatus: 'ready',
         attempts: task.attempts,
+        taskError: errorMessage,
       });
     } else {
       await pool.query(
@@ -783,6 +815,7 @@ export class OfficeStateMachine extends EventEmitter {
         statusBubble: `Erro fatal (${task.attempts}/${task.maxAttempts}): ${errorMessage}`,
         taskStatus: 'failed',
         attempts: task.attempts,
+        taskError: errorMessage,
       });
     }
   }
@@ -1056,6 +1089,7 @@ export class OfficeStateMachine extends EventEmitter {
     toolCallLog?: ToolCallLogDTO;
     taskStatus?: TaskStatus;
     attempts?: number;
+    taskError?: string | null;
   }): void {
     const states = this.ensureProjectAgentStates(params.projectId);
     const timestamp = new Date().toISOString();
@@ -1089,6 +1123,7 @@ export class OfficeStateMachine extends EventEmitter {
       toolCallLog: params.toolCallLog,
       taskStatus: params.taskStatus,
       attempts: params.attempts,
+      taskError: params.taskError,
       timestamp,
     };
 

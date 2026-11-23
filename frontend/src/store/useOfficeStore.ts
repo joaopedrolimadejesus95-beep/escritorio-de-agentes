@@ -257,6 +257,10 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => ({
                     ...t,
                     status: payload.taskStatus ?? t.status,
                     attempts: payload.attempts ?? t.attempts,
+                    lastError:
+                      payload.taskError !== undefined
+                        ? payload.taskError
+                        : t.lastError,
                   }
                 : t
             )

@@ -19,6 +19,20 @@ import {
   BuilderRenderer,
 } from './renderers/DepartmentRenderers.js';
 
+function formatTaskErrorForDisplay(rawError?: string | null): string {
+  if (!rawError) {
+    return 'Ocorreu uma falha na comunicação com o provedor de IA.';
+  }
+  const isQuota =
+    /\b(429|RESOURCE_EXHAUSTED)\b|exceeded your current quota|rate[_\s-]?limit/i.test(
+      rawError
+    );
+  if (isQuota && !rawError.startsWith('Cota da API') && !rawError.startsWith('Limite de requisições')) {
+    return 'Cota ou limite de requisições da API excedido (429). Aguarde ~1 minuto e clique em "Tentar Novamente", ou troque sua API key/provedor no seletor de modelo acima.';
+  }
+  return rawError;
+}
+
 export function AgentDrawer() {
   const selectedDepartment = useOfficeStore((s) => s.selectedDepartment);
   const selectDepartment = useOfficeStore((s) => s.selectDepartment);
@@ -313,8 +327,7 @@ export function AgentDrawer() {
                 wordBreak: 'break-word',
               }}
             >
-              {failedTask.lastError ??
-                'Ocorreu uma falha na comunicação com o provedor de IA.'}
+              {formatTaskErrorForDisplay(failedTask.lastError)}
             </p>
             <button
               type="button"
@@ -712,7 +725,7 @@ export function AgentDrawer() {
                         borderRadius: '6px',
                       }}
                     >
-                      {task.lastError}
+                      {formatTaskErrorForDisplay(task.lastError)}
                     </div>
                   )}
                 </div>

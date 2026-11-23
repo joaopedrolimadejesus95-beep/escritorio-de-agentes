@@ -125,6 +125,7 @@ export interface AgentStateChangedPayload {
   toolCallLog?: ToolCallLogDTO;
   taskStatus?: TaskStatus;
   attempts?: number;
+  taskError?: string | null;
   timestamp: string;
 }
 

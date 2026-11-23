@@ -379,6 +379,51 @@ function extractJsonFromText(rawText: string): unknown {
   }
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function isRateLimitError(message: string): boolean {
+  return /\b(429|RESOURCE_EXHAUSTED|rate[_\s-]?limit|too many requests|exceeded your current quota)\b|limite de requisições|cota da api.*esgotada/i.test(
+    message
+  );
+}
+
+export function isHardQuotaExhausted(message: string): boolean {
+  return /limit:\s*0|PerDay|daily limit|insufficient_quota|billing|cota da api.*esgotada|limite diário/i.test(
+    message
+  );
+}
+
+export function parseRetryDelayMs(message: string): number | null {
+  const secMatch = message.match(
+    /(?:retryDelay["':\s]+|retry in\s+|try again in\s+)(\d+(?:\.\d+)?)s/i
+  );
+  if (!secMatch) return null;
+  const seconds = Number(secMatch[1]);
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  return Math.min(Math.max(Math.ceil(seconds * 1000), 1500), 20_000);
+}
+
+export function computeRateLimitBackoffMs(message: string): number {
+  return parseRetryDelayMs(message) ?? 12_000;
+}
+
+export function formatLLMErrorMessage(rawMessage: string): string {
+  const clean = sanitizeSensitiveText(rawMessage);
+  if (!isRateLimitError(clean)) {
+    return clean;
+  }
+
+  if (isHardQuotaExhausted(clean)) {
+    return 'Cota da API de IA esgotada (429 — limite diário ou plano gratuito atingido). Troque sua chave de API ou alterne o provedor no seletor de modelo acima.';
+  }
+
+  const retryMs = parseRetryDelayMs(clean);
+  const hintSec = retryMs ? ` (~${Math.ceil(retryMs / 1000)}s)` : ' (~1 min)';
+  return `Limite de requisições da API atingido (429 / Rate Limit). Aguarde${hintSec} e clique em "Tentar Novamente", ou troque sua API key/modelo no seletor acima.`;
+}
+
 const GEMINI_FALLBACK_CHAIN = [
   'gemini-3.8-flash',
   'gemini-3.7-flash',
@@ -457,6 +502,9 @@ async function invokeProviderRaw(
         console.warn(
           `[LLM Service] Modelo ${candidateModel} indisponível/sobrecarregado (${msg.slice(0, 90)}). Tentando próximo fallback...`
         );
+        if (isRateLimitError(msg) && !isHardQuotaExhausted(msg)) {
+          await sleep(Math.min(parseRetryDelayMs(msg) ?? 1500, 3500));
+        }
       }
     }
 
@@ -727,12 +775,23 @@ export async function generateValidatedJson<TSchema extends z.ZodTypeAny>(params
   let lastErrorSummary = '';
 
   for (let attempt = 1; attempt <= 3; attempt++) {
-    const { rawText, tokensUsed } = await invokeProviderRaw(config, {
-      systemInstruction: params.systemInstruction,
-      userPrompt: currentPrompt,
-      temperature: params.temperature,
-      maxTokens: params.maxTokens,
-    });
+    let rawText = '';
+    let tokensUsed = 0;
+    try {
+      const invoked = await invokeProviderRaw(config, {
+        systemInstruction: params.systemInstruction,
+        userPrompt: currentPrompt,
+        temperature: params.temperature,
+        maxTokens: params.maxTokens,
+      });
+      rawText = invoked.rawText;
+      tokensUsed = invoked.tokensUsed;
+    } catch (err) {
+      const rawMsg = sanitizeSensitiveText(
+        err instanceof Error ? err.message : String(err)
+      );
+      throw new Error(formatLLMErrorMessage(rawMsg));
+    }
     totalTokens += tokensUsed;
 
     try {
