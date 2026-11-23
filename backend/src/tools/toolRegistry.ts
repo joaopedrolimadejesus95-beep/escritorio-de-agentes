@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import type { DepartmentId, ToolCallLogDTO } from '@ai-office/shared';
+import { assertSafePublicHttpUrl } from '../security/security.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WORKSPACE_SANDBOX_ROOT = path.resolve(__dirname, '../../../workspace_outputs');
@@ -222,14 +223,31 @@ export const HttpFetchPageTool: AgentToolDefinition<
   inputSchema: HttpFetchInputSchema,
   async execute({ url, maxChars }) {
     try {
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-          Accept: 'text/html,application/json,text/plain,*/*',
-        },
-        signal: AbortSignal.timeout(6000),
-      });
+      let currentUrl = (await assertSafePublicHttpUrl(url)).toString();
+      let response: Response | null = null;
+      for (let hop = 0; hop < 3; hop++) {
+        response = await fetch(currentUrl, {
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+            Accept: 'text/html,application/json,text/plain,*/*',
+          },
+          redirect: 'manual',
+          signal: AbortSignal.timeout(6000),
+        });
+        if (response.status >= 300 && response.status < 400) {
+          const loc = response.headers.get('location');
+          if (!loc) break;
+          currentUrl = (
+            await assertSafePublicHttpUrl(new URL(loc, currentUrl).toString())
+          ).toString();
+          continue;
+        }
+        break;
+      }
+      if (!response) {
+        throw new Error('Sem resposta HTTP do servidor de destino.');
+      }
 
       const rawText = await response.text();
       const titleMatch = rawText.match(/<title[^>]*>([\s\S]*?)<\/title>/i);

@@ -3,19 +3,34 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+import {
+  getUserByCookieHeader,
+  loginUser,
+  logoutByCookieHeader,
+  registerUser,
+} from './auth/authService.js';
 import { pool } from './db/pool.js';
 import { runMigrations } from './db/migrate.js';
-import { OfficeStateMachine } from './orchestrator/stateMachine.js';
 import {
+  deleteUserLLMConfig,
   getLLMStatus,
   LLMNotConfiguredError,
   loadLocalEnvFile,
-  saveRuntimeLLMConfig,
+  saveUserLLMConfig,
 } from './llm/llmService.js';
-import { ResearchPod } from './pods/researchPod.js';
+import { OfficeStateMachine } from './orchestrator/stateMachine.js';
 import { DesignPod } from './pods/designPod.js';
 import { EngineeringPod } from './pods/engineeringPod.js';
 import { GrowthPod } from './pods/growthPod.js';
+import { ResearchPod } from './pods/researchPod.js';
+import {
+  buildSecurityHeaders,
+  buildSessionCookieHeader,
+  getClientIp,
+  globalRateLimiter,
+  sanitizeSensitiveText,
+  SESSION_TTL_SECONDS,
+} from './security/security.js';
 import {
   createOfficeSocketServer,
   getProjectRoom,
@@ -23,94 +38,274 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WORKSPACE_OUTPUTS_DIR = path.resolve(__dirname, '../../workspace_outputs');
-
 const PORT = Number(process.env.PORT ?? 4000);
+const MAX_JSON_BODY_BYTES = 64 * 1024; // 64 KB máx por requisição JSON
+
+const RegisterSchema = z.object({
+  name: z.string().trim().min(2, 'Informe seu nome (mín. 2 caracteres)').max(80),
+  email: z.string().trim().email('E-mail inválido').max(160),
+  password: z
+    .string()
+    .min(8, 'A senha precisa ter pelo menos 8 caracteres')
+    .max(128),
+});
+
+const LoginSchema = z.object({
+  email: z.string().trim().email('E-mail inválido').max(160),
+  password: z.string().min(1, 'Informe sua senha').max(128),
+});
 
 const CreateProjectSchema = z.object({
-  title: z.string().min(3),
-  rawScope: z.string().min(10),
-  tokenBudget: z.number().int().positive().optional(),
+  title: z.string().trim().min(3).max(120),
+  rawScope: z.string().trim().min(10).max(4000),
+  tokenBudget: z.number().int().positive().max(200_000).optional(),
 });
 
 const SaveLLMSettingsSchema = z.object({
   provider: z.enum(['gemini', 'anthropic', 'openai', 'ollama']),
-  model: z.string().min(2),
-  apiKey: z.string().optional(),
-  baseUrl: z.string().url().optional(),
+  model: z.string().trim().min(2).max(120),
+  apiKey: z.string().max(400).optional(),
+  baseUrl: z.string().url().max(300).optional(),
+  persistInDb: z.boolean().optional().default(true),
 });
+
+class PayloadTooLargeError extends Error {
+  constructor() {
+    super('Corpo da requisição excedeu o limite máximo permitido (64 KB).');
+  }
+}
 
 async function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
+  let totalBytes = 0;
+
   for await (const chunk of req) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += buf.length;
+    if (totalBytes > MAX_JSON_BODY_BYTES) {
+      throw new PayloadTooLargeError();
+    }
+    chunks.push(buf);
   }
+
   const raw = Buffer.concat(chunks).toString('utf-8');
   return raw ? JSON.parse(raw) : {};
 }
 
 function sendJson(
+  req: http.IncomingMessage,
   res: http.ServerResponse,
   statusCode: number,
-  data: unknown
+  data: unknown,
+  extraHeaders: Record<string, string | string[]> = {}
 ): void {
+  const secHeaders = buildSecurityHeaders({
+    requestOrigin: req.headers.origin,
+    isApi: true,
+  });
   res.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    ...secHeaders,
+    ...extraHeaders,
   });
   res.end(JSON.stringify(data));
+}
+
+function isRequestHttps(req: http.IncomingMessage): boolean {
+  const proto = req.headers['x-forwarded-proto'];
+  return proto === 'https';
 }
 
 export async function startServer(): Promise<void> {
   await loadLocalEnvFile();
   await runMigrations();
 
-  // Reconcilia tarefas órfãs que ficaram em 'running' caso o servidor tenha reiniciado no meio de uma execução
   await pool.query(
     `UPDATE tasks SET status = 'ready', updated_at = NOW() WHERE status = 'running'`
   );
 
   const stateMachine = new OfficeStateMachine();
-
-  // Registra os Pods Especialistas (Executor + Validador Determinístico)
   stateMachine.registerPod(new ResearchPod());
   stateMachine.registerPod(new DesignPod());
   stateMachine.registerPod(new EngineeringPod());
   stateMachine.registerPod(new GrowthPod());
 
   const httpServer = http.createServer(async (req, res) => {
+    const secHeaders = buildSecurityHeaders({
+      requestOrigin: req.headers.origin,
+      isApi: req.url?.startsWith('/api/'),
+    });
+
     if (req.method === 'OPTIONS') {
-      sendJson(res, 204, {});
+      res.writeHead(204, secHeaders);
+      res.end();
       return;
     }
 
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    const clientIp = getClientIp(req);
+
+    // Rate limit global por IP para proteger contra flood / DoS
+    const globalCheck = globalRateLimiter.check(
+      `http_global:${clientIp}`,
+      120,
+      60_000
+    );
+    if (!globalCheck.allowed) {
+      sendJson(
+        req,
+        res,
+        429,
+        {
+          error: `Muitas requisições. Aguarde ${globalCheck.retryAfterSec}s e tente novamente.`,
+        },
+        { 'Retry-After': String(globalCheck.retryAfterSec) }
+      );
+      return;
+    }
 
     try {
-      // GET / - Status raiz da API para quem abrir http://localhost:4000 no navegador
+      const authUser = await getUserByCookieHeader(req.headers.cookie);
+      const isHttps = isRequestHttps(req);
+
+      // GET /
       if (req.method === 'GET' && url.pathname === '/') {
-        sendJson(res, 200, {
+        sendJson(req, res, 200, {
           service: 'AI Office 3D — DAG Orchestrator Backend',
           status: 'online',
-          frontendUrl: 'http://localhost:5173',
-          endpoints: ['GET /api/health', 'GET /api/projects', 'POST /api/projects'],
+          endpoints: [
+            'GET /api/health',
+            'POST /api/auth/register',
+            'POST /api/auth/login',
+            'POST /api/auth/logout',
+            'GET /api/auth/me',
+            'GET /api/projects',
+            'POST /api/projects',
+          ],
         });
         return;
       }
 
-      // GET /workspace/:projectId/* - Serve os arquivos reais (HTML, CSS, JS, Markdown, JSON) construídos pelos agentes
+      // =====================================================================
+      // ROTAS DE AUTENTICAÇÃO REAL (Cadastro, Login, Sessão, Logout)
+      // =====================================================================
+
+      if (req.method === 'GET' && url.pathname === '/api/auth/me') {
+        sendJson(req, res, 200, { user: authUser });
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/api/auth/register') {
+        const regRate = globalRateLimiter.check(
+          `auth_register:${clientIp}`,
+          8,
+          15 * 60_000
+        );
+        if (!regRate.allowed) {
+          sendJson(
+            req,
+            res,
+            429,
+            {
+              error: `Muitas tentativas de cadastro. Tente novamente em ${regRate.retryAfterSec}s.`,
+            },
+            { 'Retry-After': String(regRate.retryAfterSec) }
+          );
+          return;
+        }
+
+        const body = await readJsonBody(req);
+        const parsed = RegisterSchema.safeParse(body);
+        if (!parsed.success) {
+          sendJson(req, res, 400, {
+            error: parsed.error.issues.map((i) => i.message).join(' · '),
+          });
+          return;
+        }
+
+        const { user, sessionToken } = await registerUser(parsed.data);
+        const cookie = buildSessionCookieHeader(
+          sessionToken,
+          SESSION_TTL_SECONDS,
+          isHttps
+        );
+        sendJson(req, res, 201, { user }, { 'Set-Cookie': cookie });
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/api/auth/login') {
+        const body = await readJsonBody(req);
+        const parsed = LoginSchema.safeParse(body);
+        if (!parsed.success) {
+          sendJson(req, res, 400, {
+            error: parsed.error.issues.map((i) => i.message).join(' · '),
+          });
+          return;
+        }
+
+        const loginRate = globalRateLimiter.check(
+          `auth_login:${clientIp}:${parsed.data.email.toLowerCase()}`,
+          10,
+          15 * 60_000
+        );
+        if (!loginRate.allowed) {
+          sendJson(
+            req,
+            res,
+            429,
+            {
+              error: `Muitas tentativas de login. Aguarde ${loginRate.retryAfterSec}s.`,
+            },
+            { 'Retry-After': String(loginRate.retryAfterSec) }
+          );
+          return;
+        }
+
+        const { user, sessionToken } = await loginUser(parsed.data);
+        const cookie = buildSessionCookieHeader(
+          sessionToken,
+          SESSION_TTL_SECONDS,
+          isHttps
+        );
+        sendJson(req, res, 200, { user }, { 'Set-Cookie': cookie });
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/api/auth/logout') {
+        await logoutByCookieHeader(req.headers.cookie);
+        const clearCookie = buildSessionCookieHeader(null, 0, isHttps);
+        sendJson(req, res, 200, { ok: true }, { 'Set-Cookie': clearCookie });
+        return;
+      }
+
+      // =====================================================================
+      // WORKSPACE ESTÁTICO ISOLADO POR DONO DO PROJETO + SANDBOX CSP
+      // =====================================================================
+
       if (req.method === 'GET' && url.pathname.startsWith('/workspace/')) {
+        if (!authUser) {
+          sendJson(req, res, 401, { error: 'Faça login para visualizar arquivos do workspace.' });
+          return;
+        }
+
         const relativeReq = decodeURIComponent(
           url.pathname.replace(/^\/workspace\//, '')
         );
         const safePath = path
           .normalize(relativeReq)
           .replace(/^(\.\.(\/|\\|$))+/, '');
-        const fullFilePath = path.join(WORKSPACE_OUTPUTS_DIR, safePath);
+        const projectIdSegment = safePath.split(/[\\/]/)[0] ?? '';
 
+        if (!z.string().uuid().safeParse(projectIdSegment).success) {
+          sendJson(req, res, 400, { error: 'Identificador de projeto inválido.' });
+          return;
+        }
+
+        await stateMachine.assertProjectAccess(projectIdSegment, authUser.id);
+
+        const fullFilePath = path.join(WORKSPACE_OUTPUTS_DIR, safePath);
         if (!fullFilePath.startsWith(WORKSPACE_OUTPUTS_DIR)) {
-          sendJson(res, 403, { error: 'Acesso negado fora do workspace' });
+          sendJson(req, res, 403, { error: 'Acesso negado fora do workspace' });
           return;
         }
 
@@ -125,107 +320,201 @@ export async function startServer(): Promise<void> {
               '.json': 'application/json; charset=utf-8',
               '.md': 'text/markdown; charset=utf-8',
             };
-            const contentType =
-              mimeMap[ext] ?? 'text/plain; charset=utf-8';
+            const contentType = mimeMap[ext] ?? 'text/plain; charset=utf-8';
             const content = await fs.readFile(fullFilePath);
             res.writeHead(200, {
               'Content-Type': contentType,
-              'Access-Control-Allow-Origin': '*',
+              'X-Content-Type-Options': 'nosniff',
+              'Content-Security-Policy': "sandbox allow-scripts; default-src 'self' https://cdn.tailwindcss.com 'unsafe-inline' 'unsafe-eval';",
+              'Cache-Control': 'no-store',
             });
             res.end(content);
             return;
           }
         } catch {
-          sendJson(res, 404, { error: 'Arquivo do workspace não encontrado' });
+          sendJson(req, res, 404, { error: 'Arquivo do workspace não encontrado' });
           return;
         }
       }
 
       // GET /api/health
       if (req.method === 'GET' && url.pathname === '/api/health') {
-        const llm = await getLLMStatus();
-        sendJson(res, 200, {
+        const llm = await getLLMStatus(authUser?.id ?? null);
+        sendJson(req, res, 200, {
           status: 'ok',
+          authenticated: Boolean(authUser),
           llm,
           timestamp: new Date().toISOString(),
         });
         return;
       }
 
-      // GET /api/settings/llm - Retorna status do provedor de IA (sem expor chave completa)
+      // =====================================================================
+      // COFRE DE CHAVES DE IA POR USUÁRIO (AES-256-GCM ou MEMÓRIA DE SESSÃO)
+      // =====================================================================
+
       if (req.method === 'GET' && url.pathname === '/api/settings/llm') {
-        const status = await getLLMStatus();
-        sendJson(res, 200, status);
+        const status = await getLLMStatus(authUser?.id ?? null);
+        sendJson(req, res, 200, status);
         return;
       }
 
-      // POST /api/settings/llm - Configura provedor de IA real (Gemini, OpenAI ou Ollama)
       if (req.method === 'POST' && url.pathname === '/api/settings/llm') {
+        if (!authUser) {
+          sendJson(req, res, 401, {
+            code: 'AUTH_REQUIRED',
+            error: 'Entre ou crie uma conta para conectar sua API key com isolamento criptografado.',
+          });
+          return;
+        }
+
+        const keyRate = globalRateLimiter.check(
+          `llm_settings:${authUser.id}`,
+          20,
+          60_000
+        );
+        if (!keyRate.allowed) {
+          sendJson(req, res, 429, {
+            error: `Muitas alterações de chave. Aguarde ${keyRate.retryAfterSec}s.`,
+          });
+          return;
+        }
+
         const body = await readJsonBody(req);
         const parsed = SaveLLMSettingsSchema.safeParse(body);
         if (!parsed.success) {
-          sendJson(res, 400, {
+          sendJson(req, res, 400, {
             error: 'Configuração de IA inválida',
             issues: parsed.error.issues,
           });
           return;
         }
         if (parsed.data.provider !== 'ollama' && !parsed.data.apiKey?.trim()) {
-          sendJson(res, 400, {
+          sendJson(req, res, 400, {
             error: `Informe uma API Key válida para o provedor ${parsed.data.provider}.`,
           });
           return;
         }
 
-        const status = await saveRuntimeLLMConfig(parsed.data, true);
-        sendJson(res, 200, status);
+        const status = await saveUserLLMConfig({
+          userId: authUser.id,
+          config: {
+            provider: parsed.data.provider,
+            model: parsed.data.model,
+            apiKey: parsed.data.apiKey,
+            baseUrl: parsed.data.baseUrl,
+          },
+          persistInDb: parsed.data.persistInDb,
+        });
+        sendJson(req, res, 200, status);
         return;
       }
 
-      // GET /api/projects - Lista projetos existentes (ou cria um demo se vazio)
+      if (req.method === 'DELETE' && url.pathname === '/api/settings/llm') {
+        if (!authUser) {
+          sendJson(req, res, 401, { error: 'Sessão não autenticada.' });
+          return;
+        }
+        const status = await deleteUserLLMConfig(authUser.id);
+        sendJson(req, res, 200, status);
+        return;
+      }
+
+      // =====================================================================
+      // PROJETOS & HISTÓRICO PRIVADO DO USUÁRIO
+      // =====================================================================
+
       if (req.method === 'GET' && url.pathname === '/api/projects') {
-        const result = await pool.query(
-          `SELECT id, title, raw_scope, status, token_budget, tokens_used, created_at
-           FROM projects
-           ORDER BY created_at DESC
-           LIMIT 20`
-        );
-        sendJson(res, 200, { projects: result.rows });
+        if (!authUser) {
+          sendJson(req, res, 200, { projects: [] });
+          return;
+        }
+        const projects = await stateMachine.listUserProjects(authUser.id);
+        sendJson(req, res, 200, { projects });
         return;
       }
 
-      // POST /api/projects - Cria e planeja um novo projeto no DAG
       if (req.method === 'POST' && url.pathname === '/api/projects') {
+        if (!authUser) {
+          sendJson(req, res, 401, {
+            code: 'AUTH_REQUIRED',
+            error: 'Entre ou crie uma conta para iniciar e salvar seu histórico de projetos.',
+          });
+          return;
+        }
+
+        const createRate = globalRateLimiter.check(
+          `create_project:${authUser.id}`,
+          8,
+          60_000
+        );
+        if (!createRate.allowed) {
+          sendJson(
+            req,
+            res,
+            429,
+            {
+              error: `Limite de criação de projetos atingido (máx 8/min). Aguarde ${createRate.retryAfterSec}s.`,
+            },
+            { 'Retry-After': String(createRate.retryAfterSec) }
+          );
+          return;
+        }
+
         const body = await readJsonBody(req);
         const parsed = CreateProjectSchema.safeParse(body);
         if (!parsed.success) {
-          sendJson(res, 400, {
+          sendJson(req, res, 400, {
             error: 'Payload inválido',
             issues: parsed.error.issues,
           });
           return;
         }
 
-        const project = await stateMachine.createAndPlanProject(parsed.data);
+        const project = await stateMachine.createAndPlanProject({
+          userId: authUser.id,
+          ...parsed.data,
+        });
         const snapshot = await stateMachine.getOfficeSnapshot(project.id);
         io.to(getProjectRoom(project.id)).emit('OFFICE_SNAPSHOT', snapshot);
 
-        sendJson(res, 201, { project, snapshot });
+        sendJson(req, res, 201, { project, snapshot });
         return;
       }
 
-      sendJson(res, 404, { error: 'Rota não encontrada' });
+      sendJson(req, res, 404, { error: 'Rota não encontrada' });
     } catch (error) {
+      if (error instanceof PayloadTooLargeError) {
+        sendJson(req, res, 413, { error: error.message });
+        return;
+      }
+      if (error instanceof SyntaxError) {
+        sendJson(req, res, 400, { error: 'JSON inválido no corpo da requisição.' });
+        return;
+      }
       if (error instanceof LLMNotConfiguredError) {
-        sendJson(res, 428, {
+        sendJson(req, res, 428, {
           code: error.code,
           error: error.message,
         });
         return;
       }
-      const message = error instanceof Error ? error.message : String(error);
+      const message = sanitizeSensitiveText(
+        error instanceof Error ? error.message : String(error)
+      );
+      if (message.startsWith('Acesso negado')) {
+        sendJson(req, res, 403, { error: message });
+        return;
+      }
+      if (
+        message.includes('E-mail ou senha inválidos') ||
+        message.includes('Já existe uma conta cadastrada')
+      ) {
+        sendJson(req, res, 400, { error: message });
+        return;
+      }
       console.error('[HTTP Error]:', message);
-      sendJson(res, 500, { error: message });
+      sendJson(req, res, 500, { error: message });
     }
   });
 

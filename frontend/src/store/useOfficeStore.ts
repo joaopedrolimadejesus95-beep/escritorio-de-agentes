@@ -28,13 +28,26 @@ export interface ActiveHandoffAnimation {
 }
 
 export type LLMProviderType = 'gemini' | 'anthropic' | 'openai' | 'ollama';
+export type LLMKeyStorageMode =
+  | 'encrypted_db'
+  | 'session_memory'
+  | 'local_env'
+  | 'ollama_auto';
 
 export interface LLMStatusDTO {
   configured: boolean;
   provider: LLMProviderType | null;
   model: string | null;
   maskedKey: string | null;
+  storageMode?: LLMKeyStorageMode | null;
   ollamaAvailable: boolean;
+}
+
+export interface AuthUserDTO {
+  id: string;
+  name: string;
+  email: string;
+  createdAt: string;
 }
 
 const DEFAULT_AGENTS: Record<DepartmentId, AgentDeskStateDTO> = {
@@ -83,6 +96,11 @@ const DEFAULT_AGENTS: Record<DepartmentId, AgentDeskStateDTO> = {
 interface OfficeStoreState {
   socket: Socket<ServerToClientEvents, ClientToServerEvents> | null;
   connected: boolean;
+  authUser: AuthUserDTO | null;
+  authChecked: boolean;
+  isAuthModalOpen: boolean;
+  isHistoryModalOpen: boolean;
+  projectHistory: ProjectDTO[];
   project: ProjectDTO | null;
   agents: Record<DepartmentId, AgentDeskStateDTO>;
   tasks: TaskDTO[];
@@ -95,14 +113,28 @@ interface OfficeStoreState {
   isSettingsModalOpen: boolean;
 
   connectSocket: (projectId?: string) => void;
+  reconnectSocketWithSession: (projectId?: string) => void;
   joinProject: (projectId: string) => void;
+  fetchAuthMe: () => Promise<void>;
+  login: (params: { email: string; password: string }) => Promise<void>;
+  register: (params: {
+    name: string;
+    email: string;
+    password: string;
+  }) => Promise<void>;
+  logout: () => Promise<void>;
+  fetchProjectHistory: () => Promise<void>;
+  setAuthModalOpen: (open: boolean) => void;
+  setHistoryModalOpen: (open: boolean) => void;
   fetchLLMStatus: () => Promise<void>;
   saveLLMSettings: (params: {
     provider: LLMProviderType;
     model: string;
     apiKey?: string;
     baseUrl?: string;
+    persistInDb?: boolean;
   }) => Promise<void>;
+  deleteLLMSettings: () => Promise<void>;
   setSettingsModalOpen: (open: boolean) => void;
   createProject: (params: {
     title: string;
@@ -122,6 +154,11 @@ interface OfficeStoreState {
 export const useOfficeStore = create<OfficeStoreState>((set, get) => ({
   socket: null,
   connected: false,
+  authUser: null,
+  authChecked: false,
+  isAuthModalOpen: false,
+  isHistoryModalOpen: false,
+  projectHistory: [],
   project: null,
   agents: DEFAULT_AGENTS,
   tasks: [],
@@ -134,6 +171,7 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => ({
   isSettingsModalOpen: false,
 
   connectSocket: (initialProjectId?: string) => {
+    void get().fetchAuthMe();
     void get().fetchLLMStatus();
 
     const existing = get().socket;
@@ -148,13 +186,14 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => ({
       BACKEND_URL,
       {
         transports: ['websocket'],
+        withCredentials: true,
       }
     );
 
     socket.on('connect', () => {
       set({ connected: true, lastError: null });
       const targetProjectId = initialProjectId ?? get().project?.id;
-      if (targetProjectId) {
+      if (targetProjectId && get().authUser) {
         socket.emit('JOIN_PROJECT', { projectId: targetProjectId });
       }
     });
@@ -294,9 +333,134 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => ({
     set({ socket });
   },
 
+  reconnectSocketWithSession: (projectId?: string) => {
+    const oldSocket = get().socket;
+    if (oldSocket) {
+      oldSocket.removeAllListeners();
+      oldSocket.disconnect();
+      set({ socket: null, connected: false });
+    }
+    get().connectSocket(projectId);
+  },
+
+  fetchAuthMe: async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/auth/me`, {
+        credentials: 'include',
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { user: AuthUserDTO | null };
+        set({ authUser: data.user, authChecked: true });
+        if (data.user) {
+          void get().fetchProjectHistory();
+          const urlId = new URLSearchParams(window.location.search).get(
+            'projectId'
+          );
+          if (urlId && !get().project) {
+            get().joinProject(urlId);
+          }
+        }
+      } else {
+        set({ authChecked: true });
+      }
+    } catch {
+      set({ authChecked: true });
+    }
+  },
+
+  login: async (params) => {
+    const res = await fetch(`${BACKEND_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(params),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error ?? 'Falha ao entrar na conta.');
+    }
+    const urlId =
+      new URLSearchParams(window.location.search).get('projectId') ?? undefined;
+    set({
+      authUser: data.user as AuthUserDTO,
+      isAuthModalOpen: false,
+      lastError: null,
+    });
+    get().reconnectSocketWithSession(urlId);
+    void get().fetchLLMStatus();
+    void get().fetchProjectHistory();
+  },
+
+  register: async (params) => {
+    const res = await fetch(`${BACKEND_URL}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(params),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error ?? 'Falha ao criar conta.');
+    }
+    set({
+      authUser: data.user as AuthUserDTO,
+      isAuthModalOpen: false,
+      lastError: null,
+    });
+    get().reconnectSocketWithSession();
+    void get().fetchLLMStatus();
+    void get().fetchProjectHistory();
+  },
+
+  logout: async () => {
+    await fetch(`${BACKEND_URL}/api/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+    }).catch(() => {});
+
+    window.history.replaceState(null, '', window.location.pathname);
+    set({
+      authUser: null,
+      projectHistory: [],
+      project: null,
+      agents: DEFAULT_AGENTS,
+      tasks: [],
+      artifacts: [],
+      selectedDepartment: null,
+      llmStatus: null,
+      isHistoryModalOpen: false,
+      lastError: null,
+    });
+    get().reconnectSocketWithSession();
+  },
+
+  fetchProjectHistory: async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/projects`, {
+        credentials: 'include',
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { projects: ProjectDTO[] };
+        set({ projectHistory: data.projects ?? [] });
+      }
+    } catch {
+      // Silencioso
+    }
+  },
+
+  setAuthModalOpen: (open) => set({ isAuthModalOpen: open }),
+  setHistoryModalOpen: (open) => {
+    if (open && get().authUser) {
+      void get().fetchProjectHistory();
+    }
+    set({ isHistoryModalOpen: open });
+  },
+
   fetchLLMStatus: async () => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/settings/llm`);
+      const res = await fetch(`${BACKEND_URL}/api/settings/llm`, {
+        credentials: 'include',
+      });
       if (res.ok) {
         const status = (await res.json()) as LLMStatusDTO;
         set({ llmStatus: status });
@@ -310,10 +474,14 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => ({
     const res = await fetch(`${BACKEND_URL}/api/settings/llm`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify(params),
     });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
     if (!res.ok) {
+      if (res.status === 401 || data.code === 'AUTH_REQUIRED') {
+        set({ isAuthModalOpen: true });
+      }
       throw new Error(data.error ?? 'Falha ao salvar configuração de IA');
     }
     set({
@@ -323,10 +491,32 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => ({
     });
   },
 
-  setSettingsModalOpen: (open) => set({ isSettingsModalOpen: open }),
+  deleteLLMSettings: async () => {
+    const res = await fetch(`${BACKEND_URL}/api/settings/llm`, {
+      method: 'DELETE',
+      credentials: 'include',
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error ?? 'Falha ao remover chave salva.');
+    }
+    set({ llmStatus: data as LLMStatusDTO });
+  },
+
+  setSettingsModalOpen: (open) => {
+    if (open && !get().authUser) {
+      set({ isAuthModalOpen: true });
+      return;
+    }
+    set({ isSettingsModalOpen: open });
+  },
 
   joinProject: (projectId: string) => {
-    const { socket } = get();
+    const { socket, authUser } = get();
+    if (!authUser) {
+      set({ isAuthModalOpen: true });
+      return;
+    }
     if (!socket) {
       get().connectSocket(projectId);
       return;
@@ -335,21 +525,32 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => ({
   },
 
   createProject: async (params) => {
+    if (!get().authUser) {
+      set({
+        isAuthModalOpen: true,
+        lastError: 'Entre ou crie uma conta para iniciar e salvar seus projetos.',
+      });
+      throw new Error('Autenticação necessária');
+    }
+
     set({ lastError: null });
     const response = await fetch(`${BACKEND_URL}/api/projects`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify(params),
     });
 
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      if (response.status === 428 || data.code === 'LLM_NOT_CONFIGURED') {
+      if (response.status === 401 || data.code === 'AUTH_REQUIRED') {
+        set({ isAuthModalOpen: true, lastError: data.error ?? 'Login necessário.' });
+      } else if (response.status === 428 || data.code === 'LLM_NOT_CONFIGURED') {
         set({
           isSettingsModalOpen: true,
           lastError:
             data.error ??
-            'Configure um provedor de IA (Gemini, OpenAI ou Ollama) para executar o fluxo real.',
+            'Configure sua chave de IA (Gemini, Anthropic, OpenAI ou Ollama).',
         });
       } else {
         set({ lastError: data.error ?? 'Falha ao iniciar projeto' });
@@ -371,6 +572,7 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => ({
     });
 
     get().joinProject(typed.project.id);
+    void get().fetchProjectHistory();
   },
 
   selectDepartment: (department) => {

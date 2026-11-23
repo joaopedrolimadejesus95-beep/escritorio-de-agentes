@@ -16,6 +16,8 @@ import {
   type ToolCallLogDTO,
 } from '@ai-office/shared';
 import { pool, withTransaction, type DbClient } from '../db/pool.js';
+import { runWithLLMUserContext } from '../llm/llmService.js';
+import { sanitizeSensitiveText } from '../security/security.js';
 import { DirectorPlanner } from './planner.js';
 import {
   defaultToolRegistry,
@@ -114,18 +116,32 @@ export class OfficeStateMachine extends EventEmitter {
   // --------------------------------------------------------------------------
 
   public async createAndPlanProject(params: {
+    userId: string;
     title: string;
     rawScope: string;
     tokenBudget?: number;
   }): Promise<ProjectDTO> {
+    const activeCountRes = await pool.query(
+      `SELECT COUNT(*)::int AS cnt
+       FROM projects
+       WHERE user_id = $1 AND status IN ('planning', 'running')`,
+      [params.userId]
+    );
+    const activeCount = Number(activeCountRes.rows[0]?.cnt ?? 0);
+    if (activeCount >= 2) {
+      throw new Error(
+        'Você já possui 2 projetos em execução simultânea. Pause ou finalize um antes de iniciar outro.'
+      );
+    }
+
     const tokenBudget = params.tokenBudget ?? 100_000;
 
-    // 1. Cria o projeto no status 'planning'
+    // 1. Cria o projeto vinculado ao usuário autenticado no status 'planning'
     const insertRes = await pool.query(
-      `INSERT INTO projects (title, raw_scope, status, token_budget, tokens_used)
-       VALUES ($1, $2, 'planning', $3, 0)
+      `INSERT INTO projects (user_id, title, raw_scope, status, token_budget, tokens_used)
+       VALUES ($1, $2, $3, 'planning', $4, 0)
        RETURNING *`,
-      [params.title, params.rawScope, tokenBudget]
+      [params.userId, params.title, params.rawScope, tokenBudget]
     );
     const project = this.mapProjectRow(insertRes.rows[0]);
 
@@ -140,9 +156,11 @@ export class OfficeStateMachine extends EventEmitter {
     });
 
     try {
-      // 2. Planejamento via DirectorPlanner + Validação Zod + Kahn DAG
+      // 2. Planejamento via DirectorPlanner no contexto isolado do usuário
       const { plan, topologicalTasks, tokensUsed } =
-        await this.planner.createValidatedPlan(params.rawScope);
+        await runWithLLMUserContext(params.userId, () =>
+          this.planner.createValidatedPlan(params.rawScope)
+        );
 
       await withTransaction(async (client) => {
         // Verifica teto de orçamento já no planejamento
@@ -192,7 +210,9 @@ export class OfficeStateMachine extends EventEmitter {
 
       return await this.getProject(project.id);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = sanitizeSensitiveText(
+        error instanceof Error ? error.message : String(error)
+      );
       await pool.query(`UPDATE projects SET status = 'failed' WHERE id = $1`, [
         project.id,
       ]);
@@ -449,7 +469,15 @@ export class OfficeStateMachine extends EventEmitter {
         },
       };
 
-      const output = await pod.execute(executionInput);
+      const projectRes = await pool.query(
+        `SELECT user_id FROM projects WHERE id = $1`,
+        [projectId]
+      );
+      const ownerUserId = (projectRes.rows[0]?.user_id as string | null) ?? null;
+
+      const output = await runWithLLMUserContext(ownerUserId, () =>
+        pod.execute(executionInput)
+      );
 
       // Contabiliza tokens consumidos e valida orçamento
       const budgetOk = await this.recordTokenUsage(projectId, output.tokensUsed);
@@ -519,7 +547,9 @@ export class OfficeStateMachine extends EventEmitter {
         await this.completeTaskAndEmitHandoff(projectId, task, savedArtifact);
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = sanitizeSensitiveText(
+        error instanceof Error ? error.message : String(error)
+      );
       const currentTask = await this.getTaskById(taskId);
       if (currentTask) {
         await this.handleTaskFailureOrRetry(projectId, currentTask, message);
@@ -1054,6 +1084,38 @@ export class OfficeStateMachine extends EventEmitter {
     };
 
     this.emit('AGENT_STATE_CHANGED', payload);
+  }
+
+  public async getProjectOwnerId(projectId: string): Promise<string | null> {
+    const res = await pool.query(`SELECT user_id FROM projects WHERE id = $1`, [
+      projectId,
+    ]);
+    if (res.rows.length === 0) {
+      throw new Error(`Projeto "${projectId}" não encontrado.`);
+    }
+    return (res.rows[0].user_id as string | null) ?? null;
+  }
+
+  public async assertProjectAccess(
+    projectId: string,
+    userId: string
+  ): Promise<void> {
+    const ownerId = await this.getProjectOwnerId(projectId);
+    if (!ownerId || ownerId !== userId) {
+      throw new Error('Acesso negado: este projeto pertence a outra conta.');
+    }
+  }
+
+  public async listUserProjects(userId: string): Promise<ProjectDTO[]> {
+    const res = await pool.query(
+      `SELECT id, title, raw_scope, status, token_budget, tokens_used, created_at
+       FROM projects
+       WHERE user_id = $1
+       ORDER BY created_at DESC
+       LIMIT 30`,
+      [userId]
+    );
+    return res.rows.map((r) => this.mapProjectRow(r));
   }
 
   public async getProject(projectId: string): Promise<ProjectDTO> {

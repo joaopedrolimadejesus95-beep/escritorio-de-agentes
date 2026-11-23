@@ -832,7 +832,9 @@ export function DesignRenderer({ content }: { content: Record<string, any> }) {
             >
               <iframe
                 key={currentScreen.previewUrl}
-                src={currentScreen.previewUrl}
+                srcDoc={currentRawScreen?.htmlCode}
+                src={currentRawScreen?.htmlCode ? undefined : currentScreen.previewUrl}
+                sandbox="allow-scripts"
                 title={currentScreen.title}
                 style={{
                   width: viewport === 'mobile' ? '390px' : '100%',

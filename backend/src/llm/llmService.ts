@@ -1,13 +1,23 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import fs from 'node:fs/promises';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ENV_LOCAL_PATH = path.resolve(__dirname, '../../.env.local');
+import { pool } from '../db/pool.js';
+import {
+  decryptSecret,
+  encryptSecret,
+  ensureMasterEncryptionKey,
+  ENV_LOCAL_PATH,
+  globalRateLimiter,
+  sanitizeSensitiveText,
+} from '../security/security.js';
 
 export type LLMProviderType = 'gemini' | 'anthropic' | 'openai' | 'ollama';
+export type LLMKeyStorageMode =
+  | 'encrypted_db'
+  | 'session_memory'
+  | 'local_env'
+  | 'ollama_auto';
 
 export interface LLMRuntimeConfig {
   provider: LLMProviderType;
@@ -21,23 +31,37 @@ export interface LLMStatusDTO {
   provider: LLMProviderType | null;
   model: string | null;
   maskedKey: string | null;
+  storageMode: LLMKeyStorageMode | null;
   ollamaAvailable: boolean;
 }
 
 export class LLMNotConfiguredError extends Error {
   public readonly code = 'LLM_NOT_CONFIGURED';
   constructor(
-    message = 'Nenhum provedor de IA configurado. Configure sua chave Gemini, Anthropic, OpenAI ou ative o Ollama local no botão "Configurar IA" no topo da tela.'
+    message = 'Configure sua própria chave de IA (Gemini, Anthropic, OpenAI ou Ollama local) em "Configurar IA" para executar projetos na sua conta.'
   ) {
     super(message);
     this.name = 'LLMNotConfiguredError';
   }
 }
 
-let runtimeConfig: LLMRuntimeConfig | null = null;
+const SESSION_KEY_TTL_MS = 12 * 60 * 60 * 1000;
+const llmUserContext = new AsyncLocalStorage<string | null>();
+const sessionMemoryKeys = new Map<
+  string,
+  { config: LLMRuntimeConfig; expiresAt: number }
+>();
+
+export function runWithLLMUserContext<T>(
+  userId: string | null | undefined,
+  fn: () => Promise<T>
+): Promise<T> {
+  return llmUserContext.run(userId ?? null, fn);
+}
 
 /**
- * Carrega variáveis de `backend/.env.local` (ignorado pelo git) no startup, se existir.
+ * Carrega variáveis de `backend/.env.local` (ignorado pelo git) no startup, se existir,
+ * e garante inicialização da chave mestra AES-256-GCM.
  */
 export async function loadLocalEnvFile(): Promise<void> {
   try {
@@ -56,62 +80,13 @@ export async function loadLocalEnvFile(): Promise<void> {
   } catch {
     // Arquivo .env.local opcional ainda não existe
   }
+
+  await ensureMasterEncryptionKey();
 }
 
-export async function saveRuntimeLLMConfig(
-  config: LLMRuntimeConfig,
-  persistLocal = true
-): Promise<LLMStatusDTO> {
-  runtimeConfig = {
-    provider: config.provider,
-    model: config.model.trim(),
-    apiKey: config.apiKey?.trim(),
-    baseUrl: config.baseUrl?.trim(),
-  };
-
-  if (config.provider === 'gemini' && config.apiKey) {
-    process.env.GEMINI_API_KEY = config.apiKey.trim();
-    process.env.GEMINI_MODEL = config.model.trim();
-  } else if (config.provider === 'anthropic' && config.apiKey) {
-    process.env.ANTHROPIC_API_KEY = config.apiKey.trim();
-    process.env.ANTHROPIC_MODEL = config.model.trim();
-  } else if (config.provider === 'openai' && config.apiKey) {
-    process.env.OPENAI_API_KEY = config.apiKey.trim();
-    process.env.OPENAI_MODEL = config.model.trim();
-  } else if (config.provider === 'ollama') {
-    process.env.OLLAMA_MODEL = config.model.trim();
-    if (config.baseUrl) {
-      process.env.OLLAMA_BASE_URL = config.baseUrl.trim();
-    }
-  }
-
-  if (persistLocal) {
-    const lines = [
-      `LLM_PROVIDER=${config.provider}`,
-      config.provider === 'gemini' && config.apiKey
-        ? `GEMINI_API_KEY=${config.apiKey.trim()}`
-        : '',
-      config.provider === 'gemini' ? `GEMINI_MODEL=${config.model.trim()}` : '',
-      config.provider === 'anthropic' && config.apiKey
-        ? `ANTHROPIC_API_KEY=${config.apiKey.trim()}`
-        : '',
-      config.provider === 'anthropic'
-        ? `ANTHROPIC_MODEL=${config.model.trim()}`
-        : '',
-      config.provider === 'openai' && config.apiKey
-        ? `OPENAI_API_KEY=${config.apiKey.trim()}`
-        : '',
-      config.provider === 'openai' ? `OPENAI_MODEL=${config.model.trim()}` : '',
-      config.provider === 'ollama' ? `OLLAMA_MODEL=${config.model.trim()}` : '',
-      config.provider === 'ollama' && config.baseUrl
-        ? `OLLAMA_BASE_URL=${config.baseUrl.trim()}`
-        : '',
-    ].filter(Boolean);
-
-    await fs.writeFile(ENV_LOCAL_PATH, lines.join('\n') + '\n', 'utf-8');
-  }
-
-  return await getLLMStatus();
+function maskApiKey(key?: string | null): string | null {
+  if (!key || key.length < 8) return null;
+  return `${key.slice(0, 4)}...${key.slice(-4)}`;
 }
 
 async function checkOllamaHealth(
@@ -127,18 +102,152 @@ async function checkOllamaHealth(
   }
 }
 
-function maskApiKey(key?: string): string | null {
-  if (!key || key.length < 8) return null;
-  return `${key.slice(0, 4)}...${key.slice(-4)}`;
-}
+/**
+ * Salva configuração de IA isolada para um usuário específico.
+ * - `persistInDb = true`: criptografa a API key com AES-256-GCM + AAD (`userId:provider`).
+ * - `persistInDb = false`: mantém apenas na memória RAM efêmera da sessão (zero persistência).
+ */
+export async function saveUserLLMConfig(params: {
+  userId: string;
+  config: LLMRuntimeConfig;
+  persistInDb: boolean;
+}): Promise<LLMStatusDTO> {
+  const cleanConfig: LLMRuntimeConfig = {
+    provider: params.config.provider,
+    model: params.config.model.trim(),
+    apiKey: params.config.apiKey?.trim(),
+    baseUrl: params.config.baseUrl?.trim(),
+  };
 
-export function resolveActiveLLMConfig(): LLMRuntimeConfig | null {
-  if (runtimeConfig) {
-    if (runtimeConfig.provider === 'ollama' || runtimeConfig.apiKey) {
-      return runtimeConfig;
-    }
+  if (!params.persistInDb) {
+    sessionMemoryKeys.set(params.userId, {
+      config: cleanConfig,
+      expiresAt: Date.now() + SESSION_KEY_TTL_MS,
+    });
+    await pool.query(`DELETE FROM user_llm_configs WHERE user_id = $1`, [
+      params.userId,
+    ]);
+    return await getLLMStatus(params.userId);
   }
 
+  sessionMemoryKeys.delete(params.userId);
+
+  let ciphertext: string | null = null;
+  let iv: string | null = null;
+  let tag: string | null = null;
+  let keyMask: string | null = null;
+
+  if (cleanConfig.provider !== 'ollama' && cleanConfig.apiKey) {
+    const enc = await encryptSecret(
+      cleanConfig.apiKey,
+      `${params.userId}:${cleanConfig.provider}`
+    );
+    ciphertext = enc.ciphertext;
+    iv = enc.iv;
+    tag = enc.tag;
+    keyMask = maskApiKey(cleanConfig.apiKey);
+  }
+
+  await pool.query(
+    `INSERT INTO user_llm_configs (
+       user_id, provider, model, base_url, api_key_ciphertext, api_key_iv, api_key_tag, key_mask, updated_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+     ON CONFLICT (user_id) DO UPDATE SET
+       provider = EXCLUDED.provider,
+       model = EXCLUDED.model,
+       base_url = EXCLUDED.base_url,
+       api_key_ciphertext = EXCLUDED.api_key_ciphertext,
+       api_key_iv = EXCLUDED.api_key_iv,
+       api_key_tag = EXCLUDED.api_key_tag,
+       key_mask = EXCLUDED.key_mask,
+       updated_at = NOW()`,
+    [
+      params.userId,
+      cleanConfig.provider,
+      cleanConfig.model,
+      cleanConfig.baseUrl ?? null,
+      ciphertext,
+      iv,
+      tag,
+      keyMask,
+    ]
+  );
+
+  return await getLLMStatus(params.userId);
+}
+
+export async function deleteUserLLMConfig(userId: string): Promise<LLMStatusDTO> {
+  sessionMemoryKeys.delete(userId);
+  await pool.query(`DELETE FROM user_llm_configs WHERE user_id = $1`, [userId]);
+  return await getLLMStatus(userId);
+}
+
+function getSessionMemoryConfig(userId: string): LLMRuntimeConfig | null {
+  const entry = sessionMemoryKeys.get(userId);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    sessionMemoryKeys.delete(userId);
+    return null;
+  }
+  return entry.config;
+}
+
+async function resolveUserStoredConfig(userId: string): Promise<{
+  config: LLMRuntimeConfig;
+  storageMode: LLMKeyStorageMode;
+  maskedKey: string | null;
+} | null> {
+  const mem = getSessionMemoryConfig(userId);
+  if (mem) {
+    return {
+      config: mem,
+      storageMode: 'session_memory',
+      maskedKey: maskApiKey(mem.apiKey),
+    };
+  }
+
+  const res = await pool.query(
+    `SELECT provider, model, base_url, api_key_ciphertext, api_key_iv, api_key_tag, key_mask
+     FROM user_llm_configs
+     WHERE user_id = $1
+     LIMIT 1`,
+    [userId]
+  );
+
+  if (res.rows.length === 0) return null;
+  const row = res.rows[0];
+  const provider = String(row.provider) as LLMProviderType;
+  let apiKey: string | undefined;
+
+  if (
+    provider !== 'ollama' &&
+    row.api_key_ciphertext &&
+    row.api_key_iv &&
+    row.api_key_tag
+  ) {
+    apiKey = await decryptSecret(
+      {
+        ciphertext: String(row.api_key_ciphertext),
+        iv: String(row.api_key_iv),
+        tag: String(row.api_key_tag),
+      },
+      `${userId}:${provider}`
+    );
+  }
+
+  return {
+    config: {
+      provider,
+      model: String(row.model),
+      apiKey,
+      baseUrl: row.base_url ? String(row.base_url) : undefined,
+    },
+    storageMode: 'encrypted_db',
+    maskedKey: row.key_mask ? String(row.key_mask) : maskApiKey(apiKey),
+  };
+}
+
+function resolveEnvFallbackConfig(): LLMRuntimeConfig | null {
   const preferred = process.env.LLM_PROVIDER as LLMProviderType | undefined;
   const geminiKey = process.env.GEMINI_API_KEY?.trim();
   const anthropicKey = process.env.ANTHROPIC_API_KEY?.trim();
@@ -199,25 +308,42 @@ export function resolveActiveLLMConfig(): LLMRuntimeConfig | null {
   return null;
 }
 
-export async function getLLMStatus(): Promise<LLMStatusDTO> {
-  const active = resolveActiveLLMConfig();
+export async function getLLMStatus(userId?: string | null): Promise<LLMStatusDTO> {
   const ollamaAvailable = await checkOllamaHealth();
 
-  if (!active && ollamaAvailable) {
+  if (userId) {
+    const stored = await resolveUserStoredConfig(userId);
+    if (stored) {
+      return {
+        configured: Boolean(
+          stored.config.provider === 'ollama' || stored.config.apiKey
+        ),
+        provider: stored.config.provider,
+        model: stored.config.model,
+        maskedKey: stored.maskedKey,
+        storageMode: stored.storageMode,
+        ollamaAvailable,
+      };
+    }
+
+    // Usuários autenticados nunca herdam chaves de .env.local do dono do servidor
     return {
-      configured: true,
-      provider: 'ollama',
-      model: process.env.OLLAMA_MODEL?.trim() || 'llama3.1',
+      configured: false,
+      provider: null,
+      model: null,
       maskedKey: null,
-      ollamaAvailable: true,
+      storageMode: null,
+      ollamaAvailable,
     };
   }
 
+  // Sem sessão ativa (status anônimo): nunca expõe máscara nem chave global de .env.local
   return {
-    configured: Boolean(active),
-    provider: active?.provider ?? null,
-    model: active?.model ?? null,
-    maskedKey: maskApiKey(active?.apiKey),
+    configured: false,
+    provider: null,
+    model: null,
+    maskedKey: null,
+    storageMode: null,
     ollamaAvailable,
   };
 }
@@ -238,14 +364,12 @@ export interface LLMJsonCallResult<T> {
 
 function extractJsonFromText(rawText: string): unknown {
   const trimmed = rawText.trim();
-  // Remove fences ```json ... ``` se o modelo retornar markdown wrapper
   const fenceMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
   const candidate = fenceMatch?.[1]?.trim() || trimmed;
 
   try {
     return JSON.parse(candidate);
   } catch {
-    // Tenta extrair o primeiro objeto JSON balanceado
     const firstBrace = candidate.indexOf('{');
     const lastBrace = candidate.lastIndexOf('}');
     if (firstBrace !== -1 && lastBrace > firstBrace) {
@@ -272,7 +396,6 @@ async function invokeProviderRaw(
     const preferredModel =
       config.model === 'gemini-2.5-flash' ? 'gemini-3.8-flash' : config.model;
 
-    // Monta lista ordenada começando pelo modelo preferido + fallbacks em caso de 503/429/404
     const modelCandidates = Array.from(
       new Set([preferredModel, ...GEMINI_FALLBACK_CHAIN])
     );
@@ -321,13 +444,15 @@ async function invokeProviderRaw(
         };
       } catch (err) {
         lastError = err;
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = sanitizeSensitiveText(
+          err instanceof Error ? err.message : String(err)
+        );
         const isTransientOrUnavailable =
           /\b(503|504|429|404|UNAVAILABLE|DEADLINE_EXCEEDED|RESOURCE_EXHAUSTED|high demand|not found|timed? out|ETIMEDOUT)\b/i.test(
             msg
           );
         if (!isTransientOrUnavailable) {
-          throw err;
+          throw new Error(msg);
         }
         console.warn(
           `[LLM Service] Modelo ${candidateModel} indisponível/sobrecarregado (${msg.slice(0, 90)}). Tentando próximo fallback...`
@@ -335,9 +460,10 @@ async function invokeProviderRaw(
       }
     }
 
-    throw lastError instanceof Error
-      ? lastError
-      : new Error(String(lastError));
+    const finalMsg = sanitizeSensitiveText(
+      lastError instanceof Error ? lastError.message : String(lastError)
+    );
+    throw new Error(finalMsg);
   }
 
   if (config.provider === 'anthropic') {
@@ -361,7 +487,7 @@ async function invokeProviderRaw(
     });
 
     if (!res.ok) {
-      const errBody = await res.text();
+      const errBody = sanitizeSensitiveText(await res.text());
       throw new Error(
         `Anthropic API HTTP ${res.status}: ${errBody.slice(0, 300)}`
       );
@@ -413,7 +539,7 @@ async function invokeProviderRaw(
     });
 
     if (!res.ok) {
-      const errBody = await res.text();
+      const errBody = sanitizeSensitiveText(await res.text());
       throw new Error(`OpenAI API HTTP ${res.status}: ${errBody.slice(0, 300)}`);
     }
 
@@ -454,7 +580,7 @@ async function invokeProviderRaw(
   });
 
   if (!res.ok) {
-    const errBody = await res.text();
+    const errBody = sanitizeSensitiveText(await res.text());
     throw new Error(`Ollama API HTTP ${res.status}: ${errBody.slice(0, 300)}`);
   }
 
@@ -475,9 +601,7 @@ async function invokeProviderRaw(
 }
 
 /**
- * Executa chamada real ao provedor LLM com validação estrita por Zod e
- * loop automático de auto-reparo (até 2 correções caso o JSON viole o schema).
- * Zero mocks ou respostas fictícias.
+ * Executa chamada real ao provedor LLM do usuário atual (com rate-limit por usuário e auto-reparo Zod).
  */
 export async function generateValidatedJson<TSchema extends z.ZodTypeAny>(params: {
   systemInstruction: string;
@@ -487,21 +611,43 @@ export async function generateValidatedJson<TSchema extends z.ZodTypeAny>(params
   maxTokens?: number;
   extraValidator?: (data: z.infer<TSchema>) => string[];
 }): Promise<LLMJsonCallResult<z.infer<TSchema>>> {
-  let config = resolveActiveLLMConfig();
+  const activeUserId = llmUserContext.getStore() ?? null;
+  let config: LLMRuntimeConfig | null = null;
 
-  if (!config) {
-    const hasOllama = await checkOllamaHealth();
-    if (hasOllama) {
-      config = {
-        provider: 'ollama',
-        model: process.env.OLLAMA_MODEL?.trim() || 'llama3.1',
-        baseUrl: process.env.OLLAMA_BASE_URL?.trim() || 'http://localhost:11434',
-      };
+  if (activeUserId) {
+    const stored = await resolveUserStoredConfig(activeUserId);
+    config = stored?.config ?? null;
+    if (!config) {
+      throw new LLMNotConfiguredError();
+    }
+  } else {
+    config = resolveEnvFallbackConfig();
+    if (!config) {
+      const hasOllama = await checkOllamaHealth();
+      if (hasOllama) {
+        config = {
+          provider: 'ollama',
+          model: process.env.OLLAMA_MODEL?.trim() || 'llama3.1',
+          baseUrl: process.env.OLLAMA_BASE_URL?.trim() || 'http://localhost:11434',
+        };
+      }
     }
   }
 
   if (!config) {
     throw new LLMNotConfiguredError();
+  }
+
+  // Proteção contra abuso / loops infinitos: teto de 60 chamadas LLM/minuto por usuário
+  const llmRate = globalRateLimiter.check(
+    `llm_calls:${activeUserId ?? 'local'}`,
+    60,
+    60_000
+  );
+  if (!llmRate.allowed) {
+    throw new Error(
+      `Limite de requisições LLM atingido. Aguarde ${llmRate.retryAfterSec}s antes de executar novamente.`
+    );
   }
 
   let totalTokens = 0;
@@ -541,10 +687,9 @@ export async function generateValidatedJson<TSchema extends z.ZodTypeAny>(params
         lastErrorSummary = `Erros de validação de domínio:\n${extraErrors.map((e) => `- ${e}`).join('\n')}`;
       }
     } catch (err) {
-      lastErrorSummary = `Erro ao parsear JSON: ${err instanceof Error ? err.message : String(err)}`;
+      lastErrorSummary = `Erro ao parsear JSON: ${sanitizeSensitiveText(err instanceof Error ? err.message : String(err))}`;
     }
 
-    // Reenvia os erros exatos para a LLM corrigir a própria entrega
     currentPrompt = `${params.userPrompt}
 
 ATENÇÃO (Tentativa de correção ${attempt}/2):
@@ -555,6 +700,8 @@ Corrija TODOS os pontos acima e retorne EXCLUSIVAMENTE um objeto JSON válido ad
   }
 
   throw new Error(
-    `A LLM (${config.provider}/${config.model}) falhou na validação determinística após 3 tentativas.\n${lastErrorSummary}`
+    sanitizeSensitiveText(
+      `A LLM (${config.provider}/${config.model}) falhou na validação determinística após 3 tentativas.\n${lastErrorSummary}`
+    )
   );
 }

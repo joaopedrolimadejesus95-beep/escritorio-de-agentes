@@ -1,16 +1,22 @@
 import { useEffect, useState } from 'react';
 import {
   Cpu,
+  History,
+  LogIn,
+  LogOut,
   Pause,
   Play,
   Settings2,
+  User,
   X,
 } from 'lucide-react';
 import type { DepartmentId } from '@ai-office/shared';
 import { OfficeScene } from './components/OfficeScene.js';
 import { AgentDrawer } from './components/AgentDrawer.js';
 import { DEPARTMENT_DESKS } from './components/AgentDesk.js';
+import { AuthModal } from './components/AuthModal.js';
 import { LLMSettingsModal } from './components/LLMSettingsModal.js';
+import { ProjectHistoryModal } from './components/ProjectHistoryModal.js';
 import { useOfficeStore } from './store/useOfficeStore.js';
 
 const PIPELINE_ORDER: DepartmentId[] = [
@@ -34,6 +40,10 @@ export function App() {
   const clearError = useOfficeStore((s) => s.clearError);
   const llmStatus = useOfficeStore((s) => s.llmStatus);
   const setSettingsModalOpen = useOfficeStore((s) => s.setSettingsModalOpen);
+  const authUser = useOfficeStore((s) => s.authUser);
+  const setAuthModalOpen = useOfficeStore((s) => s.setAuthModalOpen);
+  const setHistoryModalOpen = useOfficeStore((s) => s.setHistoryModalOpen);
+  const logout = useOfficeStore((s) => s.logout);
 
   const [scopeInput, setScopeInput] = useState(
     'Plataforma SaaS para gestão financeira e agendamento de clínicas odontológicas'
@@ -207,8 +217,85 @@ export function App() {
             )}
           </form>
 
-          {/* Configurador de IA + Orçamento */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {/* Conta, Histórico, Configurador de IA + Orçamento */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            {authUser ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setHistoryModalOpen(true)}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    background: '#0f172a',
+                    border: '1px solid #1e293b',
+                    color: '#e2e8f0',
+                    borderRadius: '8px',
+                    padding: '6px 10px',
+                    fontSize: '11.5px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                  title="Retomar projetos anteriores"
+                >
+                  <History size={13} color="#38bdf8" />
+                  Histórico
+                </button>
+                <div
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    background: '#070a10',
+                    border: '1px solid #1e293b',
+                    borderRadius: '8px',
+                    padding: '5px 9px',
+                    fontSize: '11.5px',
+                    color: '#cbd5e1',
+                  }}
+                >
+                  <User size={12} color="#38bdf8" />
+                  <span>{authUser.name.split(' ')[0]}</span>
+                  <button
+                    type="button"
+                    onClick={() => void logout()}
+                    title="Sair da conta"
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#64748b',
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      padding: '2px',
+                    }}
+                  >
+                    <LogOut size={12} />
+                  </button>
+                </div>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setAuthModalOpen(true)}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  background: '#17253b',
+                  border: '1px solid rgba(56, 189, 248, 0.45)',
+                  color: '#bae6fd',
+                  borderRadius: '8px',
+                  padding: '6px 10px',
+                  fontSize: '11.5px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                <LogIn size={13} />
+                Entrar / Criar Conta
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setSettingsModalOpen(true)}
@@ -402,6 +489,8 @@ export function App() {
       <OfficeScene />
       <AgentDrawer />
       <LLMSettingsModal />
+      <AuthModal />
+      <ProjectHistoryModal />
     </div>
   );
 }

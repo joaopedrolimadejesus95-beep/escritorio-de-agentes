@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { KeyRound, X } from 'lucide-react';
+import { KeyRound, Trash2, X } from 'lucide-react';
 import {
   useOfficeStore,
   type LLMProviderType,
@@ -24,6 +24,7 @@ export function LLMSettingsModal() {
   const setOpen = useOfficeStore((s) => s.setSettingsModalOpen);
   const llmStatus = useOfficeStore((s) => s.llmStatus);
   const saveLLMSettings = useOfficeStore((s) => s.saveLLMSettings);
+  const deleteLLMSettings = useOfficeStore((s) => s.deleteLLMSettings);
 
   const [provider, setProvider] = useState<LLMProviderType>(
     llmStatus?.provider ?? 'gemini'
@@ -33,6 +34,7 @@ export function LLMSettingsModal() {
   );
   const [apiKey, setApiKey] = useState('');
   const [baseUrl, setBaseUrl] = useState('http://localhost:11434');
+  const [persistInDb, setPersistInDb] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,7 +56,21 @@ export function LLMSettingsModal() {
         model,
         apiKey: provider === 'ollama' ? undefined : apiKey,
         baseUrl: provider === 'ollama' ? baseUrl : undefined,
+        persistInDb,
       });
+      setApiKey('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRemoveKey = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await deleteLLMSettings();
       setApiKey('');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -126,9 +142,8 @@ export function LLMSettingsModal() {
             marginBottom: '16px',
           }}
         >
-          Conecte um provedor real para que os agentes pesquisem, arquitetem e
-          construam interfaces sem simulações. A chave é salva apenas localmente
-          em <code>backend/.env.local</code>.
+          Sua chave é exclusiva da sua conta e nunca fica exposta a outros usuários
+          ou no navegador.
         </p>
 
         <form
@@ -237,6 +252,34 @@ export function LLMSettingsModal() {
             </div>
           )}
 
+          {provider !== 'ollama' && (
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '8px',
+                background: '#070a10',
+                border: '1px solid #1e293b',
+                borderRadius: '8px',
+                padding: '9px 11px',
+                fontSize: '11.5px',
+                color: '#cbd5e1',
+                cursor: 'pointer',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={!persistInDb}
+                onChange={(e) => setPersistInDb(!e.target.checked)}
+                style={{ marginTop: '2px' }}
+              />
+              <span>
+                <strong>Modo Sessão Efêmera:</strong> não gravar chave no banco
+                (mantém apenas na RAM segura durante esta sessão).
+              </span>
+            </label>
+          )}
+
           {error && (
             <div style={{ fontSize: '12px', color: '#fca5a5' }}>{error}</div>
           )}
@@ -244,11 +287,36 @@ export function LLMSettingsModal() {
           <div
             style={{
               display: 'flex',
-              justifyContent: 'flex-end',
+              justifyContent: llmStatus?.configured ? 'space-between' : 'flex-end',
+              alignItems: 'center',
               gap: '8px',
               marginTop: '6px',
             }}
           >
+            {llmStatus?.configured && (
+              <button
+                type="button"
+                disabled={saving}
+                onClick={handleRemoveKey}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  background: 'rgba(239, 68, 68, 0.12)',
+                  color: '#fca5a5',
+                  border: '1px solid rgba(239, 68, 68, 0.35)',
+                  borderRadius: '8px',
+                  padding: '8px 11px',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  cursor: saving ? 'not-allowed' : 'pointer',
+                }}
+              >
+                <Trash2 size={13} />
+                Remover Chave
+              </button>
+            )}
+            <div style={{ display: 'flex', gap: '8px' }}>
             <button
               type="button"
               onClick={() => setOpen(false)}
@@ -281,6 +349,7 @@ export function LLMSettingsModal() {
             >
               {saving ? 'Salvando...' : 'Salvar e Conectar'}
             </button>
+            </div>
           </div>
         </form>
       </div>
