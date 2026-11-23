@@ -103,9 +103,11 @@ class HybridPgPool {
     await this.ensureInitialized();
     if (this.pgPool) {
       const res = await this.pgPool.query(sql, params);
+      const lastRes = Array.isArray(res) ? res[res.length - 1] : res;
+      const rows = (lastRes?.rows ?? []) as TRow[];
       return {
-        rows: res.rows as TRow[],
-        rowCount: res.rowCount ?? res.rows.length,
+        rows,
+        rowCount: lastRes?.rowCount ?? rows.length,
       };
     }
 
@@ -130,9 +132,11 @@ class HybridPgPool {
           params: unknown[] = []
         ) => {
           const res = await client.query(sql, params);
+          const lastRes = Array.isArray(res) ? res[res.length - 1] : res;
+          const rows = (lastRes?.rows ?? []) as TRow[];
           return {
-            rows: res.rows as TRow[],
-            rowCount: res.rowCount ?? res.rows.length,
+            rows,
+            rowCount: lastRes?.rowCount ?? rows.length,
           };
         },
         release: () => client.release(),
