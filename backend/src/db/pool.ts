@@ -61,11 +61,15 @@ class HybridPgPool {
 
       const hasExternalPg = await isTcpPortOpen(host, port);
       if (hasExternalPg) {
+        const needsSsl =
+          parsedUrl.searchParams.get('sslmode') === 'require' ||
+          (host !== 'localhost' && host !== '127.0.0.1');
         const candidatePool = new Pool({
           connectionString: connStr,
           max: 20,
           idleTimeoutMillis: 30000,
-          connectionTimeoutMillis: 3000,
+          connectionTimeoutMillis: process.env.DATABASE_URL ? 8000 : 3000,
+          ...(needsSsl ? { ssl: { rejectUnauthorized: false } } : {}),
         });
         try {
           const testClient = await candidatePool.connect();

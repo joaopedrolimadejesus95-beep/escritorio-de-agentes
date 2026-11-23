@@ -203,7 +203,7 @@ export function buildSessionCookieHeader(
     `${SESSION_COOKIE_NAME}=${token ? encodeURIComponent(token) : ''}`,
     'Path=/',
     'HttpOnly',
-    'SameSite=Lax',
+    isHttps ? 'SameSite=None' : 'SameSite=Lax',
     `Max-Age=${Math.max(0, Math.floor(maxAgeSeconds))}`,
   ];
   if (isHttps) {
@@ -326,6 +326,16 @@ export function resolveAllowedCorsOrigin(
 
   if (!requestOrigin) return allowlist[0] ?? null;
   if (allowlist.includes(requestOrigin)) return requestOrigin;
+
+  for (const pattern of allowlist) {
+    if (pattern.startsWith('https://*.') && requestOrigin.startsWith('https://')) {
+      const suffix = pattern.slice('https://*'.length); // e.g. ".vercel.app"
+      if (requestOrigin.endsWith(suffix)) {
+        return requestOrigin;
+      }
+    }
+  }
+
   return null;
 }
 
