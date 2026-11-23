@@ -7,7 +7,7 @@ import { z } from 'zod';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENV_LOCAL_PATH = path.resolve(__dirname, '../../.env.local');
 
-export type LLMProviderType = 'gemini' | 'openai' | 'ollama';
+export type LLMProviderType = 'gemini' | 'anthropic' | 'openai' | 'ollama';
 
 export interface LLMRuntimeConfig {
   provider: LLMProviderType;
@@ -27,7 +27,7 @@ export interface LLMStatusDTO {
 export class LLMNotConfiguredError extends Error {
   public readonly code = 'LLM_NOT_CONFIGURED';
   constructor(
-    message = 'Nenhum provedor de IA configurado. Configure sua chave Gemini, OpenAI ou ative o Ollama local no botão "Configurar IA" no topo da tela.'
+    message = 'Nenhum provedor de IA configurado. Configure sua chave Gemini, Anthropic, OpenAI ou ative o Ollama local no botão "Configurar IA" no topo da tela.'
   ) {
     super(message);
     this.name = 'LLMNotConfiguredError';
@@ -72,6 +72,9 @@ export async function saveRuntimeLLMConfig(
   if (config.provider === 'gemini' && config.apiKey) {
     process.env.GEMINI_API_KEY = config.apiKey.trim();
     process.env.GEMINI_MODEL = config.model.trim();
+  } else if (config.provider === 'anthropic' && config.apiKey) {
+    process.env.ANTHROPIC_API_KEY = config.apiKey.trim();
+    process.env.ANTHROPIC_MODEL = config.model.trim();
   } else if (config.provider === 'openai' && config.apiKey) {
     process.env.OPENAI_API_KEY = config.apiKey.trim();
     process.env.OPENAI_MODEL = config.model.trim();
@@ -89,6 +92,12 @@ export async function saveRuntimeLLMConfig(
         ? `GEMINI_API_KEY=${config.apiKey.trim()}`
         : '',
       config.provider === 'gemini' ? `GEMINI_MODEL=${config.model.trim()}` : '',
+      config.provider === 'anthropic' && config.apiKey
+        ? `ANTHROPIC_API_KEY=${config.apiKey.trim()}`
+        : '',
+      config.provider === 'anthropic'
+        ? `ANTHROPIC_MODEL=${config.model.trim()}`
+        : '',
       config.provider === 'openai' && config.apiKey
         ? `OPENAI_API_KEY=${config.apiKey.trim()}`
         : '',
@@ -132,9 +141,17 @@ export function resolveActiveLLMConfig(): LLMRuntimeConfig | null {
 
   const preferred = process.env.LLM_PROVIDER as LLMProviderType | undefined;
   const geminiKey = process.env.GEMINI_API_KEY?.trim();
+  const anthropicKey = process.env.ANTHROPIC_API_KEY?.trim();
   const openaiKey = process.env.OPENAI_API_KEY?.trim();
   const ollamaModel = process.env.OLLAMA_MODEL?.trim();
 
+  if (preferred === 'anthropic' && anthropicKey) {
+    return {
+      provider: 'anthropic',
+      model: process.env.ANTHROPIC_MODEL?.trim() || 'claude-sonnet-4-5',
+      apiKey: anthropicKey,
+    };
+  }
   if (preferred === 'openai' && openaiKey) {
     return {
       provider: 'openai',
@@ -155,6 +172,13 @@ export function resolveActiveLLMConfig(): LLMRuntimeConfig | null {
       provider: 'gemini',
       model: rawModel === 'gemini-2.5-flash' ? 'gemini-3.8-flash' : rawModel,
       apiKey: geminiKey,
+    };
+  }
+  if (anthropicKey) {
+    return {
+      provider: 'anthropic',
+      model: process.env.ANTHROPIC_MODEL?.trim() || 'claude-sonnet-4-5',
+      apiKey: anthropicKey,
     };
   }
   if (openaiKey) {
@@ -314,6 +338,56 @@ async function invokeProviderRaw(
     throw lastError instanceof Error
       ? lastError
       : new Error(String(lastError));
+  }
+
+  if (config.provider === 'anthropic') {
+    if (!config.apiKey) throw new LLMNotConfiguredError();
+    const base = config.baseUrl || 'https://api.anthropic.com/v1';
+    const res = await fetch(`${base}/messages`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': config.apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: config.model,
+        max_tokens: params.maxTokens ?? 8192,
+        temperature: params.temperature ?? 0.25,
+        system: `${params.systemInstruction}\n\nRetorne EXCLUSIVAMENTE um objeto JSON válido, sem markdown ou texto adicional.`,
+        messages: [{ role: 'user', content: params.userPrompt }],
+      }),
+      signal: AbortSignal.timeout(90000),
+    });
+
+    if (!res.ok) {
+      const errBody = await res.text();
+      throw new Error(
+        `Anthropic API HTTP ${res.status}: ${errBody.slice(0, 300)}`
+      );
+    }
+
+    const json = (await res.json()) as {
+      content?: Array<{ type?: string; text?: string }>;
+      usage?: { input_tokens?: number; output_tokens?: number };
+    };
+
+    const rawText = (json.content ?? [])
+      .filter((b) => b.type === 'text' && typeof b.text === 'string')
+      .map((b) => b.text)
+      .join('')
+      .trim();
+
+    if (!rawText) {
+      throw new Error('Anthropic API retornou resposta vazia.');
+    }
+
+    return {
+      rawText,
+      tokensUsed:
+        (json.usage?.input_tokens ?? 0) + (json.usage?.output_tokens ?? 0) ||
+        1800,
+    };
   }
 
   if (config.provider === 'openai') {

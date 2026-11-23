@@ -7,12 +7,14 @@ import {
 
 const DEFAULT_MODELS: Record<LLMProviderType, string> = {
   gemini: 'gemini-3.8-flash',
+  anthropic: 'claude-sonnet-4-5',
   openai: 'gpt-4o-mini',
   ollama: 'llama3.1',
 };
 
 const SUGGESTED_MODELS: Record<LLMProviderType, string[]> = {
   gemini: ['gemini-3.8-flash', 'gemini-4-argon', 'gemini-3.1-pro-preview'],
+  anthropic: ['claude-sonnet-4-5', 'claude-haiku-4-5', 'claude-opus-4-1'],
   openai: ['gpt-4o-mini', 'gpt-4o'],
   ollama: ['llama3.1', 'qwen2.5-coder'],
 };
@@ -135,14 +137,13 @@ export function LLMSettingsModal() {
         >
           <div>
             <label style={labelStyle}>Provedor</label>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              {(['gemini', 'openai', 'ollama'] as const).map((p) => (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+              {(['gemini', 'anthropic', 'openai', 'ollama'] as const).map((p) => (
                 <button
                   key={p}
                   type="button"
                   onClick={() => handleProviderChange(p)}
                   style={{
-                    flex: 1,
                     padding: '8px',
                     borderRadius: '8px',
                     border:
@@ -154,14 +155,15 @@ export function LLMSettingsModal() {
                     fontSize: '12px',
                     fontWeight: 600,
                     cursor: 'pointer',
-                    textTransform: 'capitalize',
                   }}
                 >
                   {p === 'gemini'
                     ? 'Google Gemini'
-                    : p === 'openai'
-                      ? 'OpenAI'
-                      : 'Ollama Local'}
+                    : p === 'anthropic'
+                      ? 'Anthropic (Claude)'
+                      : p === 'openai'
+                        ? 'OpenAI'
+                        : 'Ollama Local'}
                 </button>
               ))}
             </div>
@@ -201,7 +203,13 @@ export function LLMSettingsModal() {
           {provider !== 'ollama' ? (
             <div>
               <label style={labelStyle}>
-                API Key ({provider === 'gemini' ? 'GEMINI_API_KEY' : 'OPENAI_API_KEY'})
+                API Key (
+                {provider === 'gemini'
+                  ? 'GEMINI_API_KEY'
+                  : provider === 'anthropic'
+                    ? 'ANTHROPIC_API_KEY'
+                    : 'OPENAI_API_KEY'}
+                )
               </label>
               <input
                 type="password"

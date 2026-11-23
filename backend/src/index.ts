@@ -33,7 +33,7 @@ const CreateProjectSchema = z.object({
 });
 
 const SaveLLMSettingsSchema = z.object({
-  provider: z.enum(['gemini', 'openai', 'ollama']),
+  provider: z.enum(['gemini', 'anthropic', 'openai', 'ollama']),
   model: z.string().min(2),
   apiKey: z.string().optional(),
   baseUrl: z.string().url().optional(),

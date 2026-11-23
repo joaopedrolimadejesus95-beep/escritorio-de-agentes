@@ -27,7 +27,7 @@ export interface ActiveHandoffAnimation {
   durationMs: number;
 }
 
-export type LLMProviderType = 'gemini' | 'openai' | 'ollama';
+export type LLMProviderType = 'gemini' | 'anthropic' | 'openai' | 'ollama';
 
 export interface LLMStatusDTO {
   configured: boolean;
