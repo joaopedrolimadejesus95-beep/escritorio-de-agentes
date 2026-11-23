@@ -16,6 +16,7 @@ import {
   EngineeringRenderer,
   GrowthRenderer,
   ResearchRenderer,
+  BuilderRenderer,
 } from './renderers/DepartmentRenderers.js';
 
 export function AgentDrawer() {
@@ -27,6 +28,7 @@ export function AgentDrawer() {
   const approveTask = useOfficeStore((s) => s.approveTask);
   const rejectTask = useOfficeStore((s) => s.rejectTask);
   const retryTask = useOfficeStore((s) => s.retryTask);
+  const exportProjectZip = useOfficeStore((s) => s.exportProjectZip);
 
   const [feedback, setFeedback] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -536,6 +538,12 @@ export function AgentDrawer() {
                 )}
                 {selectedDepartment === 'growth' && (
                   <GrowthRenderer content={activeArtifact.content} />
+                )}
+                {selectedDepartment === 'builder' && (
+                  <BuilderRenderer
+                    content={activeArtifact.content}
+                    onExportZip={exportProjectZip}
+                  />
                 )}
               </>
             )}

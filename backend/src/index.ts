@@ -2,6 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import JSZip from 'jszip';
 import { z } from 'zod';
 import {
   getUserByCookieHeader,
@@ -19,6 +20,7 @@ import {
   saveUserLLMConfig,
 } from './llm/llmService.js';
 import { OfficeStateMachine } from './orchestrator/stateMachine.js';
+import { BuilderPod } from './pods/builder/builderPod.js';
 import { DesignPod } from './pods/designPod.js';
 import { EngineeringPod } from './pods/engineeringPod.js';
 import { GrowthPod } from './pods/growthPod.js';
@@ -37,7 +39,7 @@ import {
 } from './server/socketServer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const WORKSPACE_OUTPUTS_DIR = path.resolve(__dirname, '../../workspace_outputs');
+const WORKSPACE_OUTPUTS_DIR = path.resolve(__dirname, '../../../workspace_outputs');
 const PORT = Number(process.env.PORT ?? 4000);
 const MAX_JSON_BODY_BYTES = 64 * 1024; // 64 KB máx por requisição JSON
 
@@ -129,6 +131,7 @@ export async function startServer(): Promise<void> {
   stateMachine.registerPod(new DesignPod());
   stateMachine.registerPod(new EngineeringPod());
   stateMachine.registerPod(new GrowthPod());
+  stateMachine.registerPod(new BuilderPod());
 
   const httpServer = http.createServer(async (req, res) => {
     const secHeaders = buildSecurityHeaders({
@@ -479,6 +482,102 @@ export async function startServer(): Promise<void> {
         io.to(getProjectRoom(project.id)).emit('OFFICE_SNAPSHOT', snapshot);
 
         sendJson(req, res, 201, { project, snapshot });
+        return;
+      }
+
+      // GET /api/projects/:id/export - Exporta MVP completo em .zip (sem node_modules/dist)
+      const exportMatch = url.pathname.match(
+        /^\/api\/projects\/([0-9a-f-]+)\/export$/i
+      );
+      if (req.method === 'GET' && exportMatch) {
+        if (!authUser) {
+          sendJson(req, res, 401, {
+            code: 'AUTH_REQUIRED',
+            error: 'Faça login para exportar o código do seu projeto.',
+          });
+          return;
+        }
+
+        const projectId = exportMatch[1];
+        if (!z.string().uuid().safeParse(projectId).success) {
+          sendJson(req, res, 400, { error: 'Identificador de projeto inválido.' });
+          return;
+        }
+
+        await stateMachine.assertProjectAccess(projectId, authUser.id);
+        const project = await stateMachine.getProject(projectId);
+
+        const appDir = path.join(WORKSPACE_OUTPUTS_DIR, projectId, 'app');
+        if (!appDir.startsWith(WORKSPACE_OUTPUTS_DIR)) {
+          sendJson(req, res, 403, { error: 'Acesso negado fora do workspace.' });
+          return;
+        }
+
+        try {
+          const stat = await fs.stat(appDir);
+          if (!stat.isDirectory()) {
+            throw new Error('App directory missing');
+          }
+        } catch {
+          sendJson(req, res, 404, {
+            error:
+              'MVP ainda não construído para este projeto. Aguarde a conclusão da etapa Builder.',
+          });
+          return;
+        }
+
+        const zip = new JSZip();
+        async function appendDirToZip(dir: string) {
+          const entries = await fs.readdir(dir, { withFileTypes: true });
+          for (const entry of entries) {
+            if (
+              entry.isSymbolicLink() ||
+              entry.name === 'node_modules' ||
+              entry.name === 'dist'
+            ) {
+              continue;
+            }
+            const fullPath = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+              await appendDirToZip(fullPath);
+            } else {
+              const rel = path.relative(appDir, fullPath).replace(/\\/g, '/');
+              const data = await fs.readFile(fullPath);
+              zip.file(rel, data);
+            }
+          }
+        }
+
+        await appendDirToZip(appDir);
+
+        const slug =
+          project.title
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '')
+            .slice(0, 50) || 'ai-office-mvp';
+
+        res.writeHead(200, {
+          ...secHeaders,
+          'Content-Type': 'application/zip',
+          'Content-Disposition': `attachment; filename="${slug}.zip"`,
+          'Cache-Control': 'no-store',
+        });
+
+        await new Promise<void>((resolve, reject) => {
+          zip
+            .generateNodeStream({
+              type: 'nodebuffer',
+              streamFiles: true,
+              compression: 'DEFLATE',
+            })
+            .on('error', reject)
+            .pipe(res)
+            .on('finish', resolve)
+            .on('error', reject);
+        });
         return;
       }
 

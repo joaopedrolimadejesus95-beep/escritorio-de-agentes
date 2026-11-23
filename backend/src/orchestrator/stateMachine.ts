@@ -90,6 +90,7 @@ const ALL_DEPARTMENTS: DepartmentId[] = [
   'design',
   'engineering',
   'growth',
+  'builder',
 ];
 
 export class OfficeStateMachine extends EventEmitter {
@@ -993,6 +994,14 @@ export class OfficeStateMachine extends EventEmitter {
         },
         growth: {
           department: 'growth',
+          visualState: 'idle',
+          activeTaskId: null,
+          activeTaskKey: null,
+          statusBubble: null,
+          updatedAt: now,
+        },
+        builder: {
+          department: 'builder',
           visualState: 'idle',
           activeTaskId: null,
           activeTaskKey: null,

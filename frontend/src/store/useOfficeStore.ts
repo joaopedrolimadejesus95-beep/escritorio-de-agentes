@@ -91,6 +91,14 @@ const DEFAULT_AGENTS: Record<DepartmentId, AgentDeskStateDTO> = {
     statusBubble: 'Pronto para estratégia de lançamento',
     updatedAt: new Date().toISOString(),
   },
+  builder: {
+    department: 'builder',
+    visualState: 'idle',
+    activeTaskId: null,
+    activeTaskKey: null,
+    statusBubble: 'Pronto para build MVP',
+    updatedAt: new Date().toISOString(),
+  },
 };
 
 interface OfficeStoreState {
@@ -147,6 +155,7 @@ interface OfficeStoreState {
   rejectTask: (taskId: string, feedback: string) => Promise<void>;
   retryTask: (taskId: string) => Promise<void>;
   pauseProject: (reason?: string) => Promise<void>;
+  exportProjectZip: () => Promise<void>;
   clearError: () => void;
   pruneExpiredHandoffs: (now: number) => void;
 }
@@ -633,6 +642,40 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => ({
         else reject(new Error(res?.error ?? 'Erro ao pausar projeto'));
       });
     });
+  },
+
+  exportProjectZip: async () => {
+    const { project } = get();
+    if (!project) return;
+
+    const res = await fetch(
+      `${BACKEND_URL}/api/projects/${project.id}/export`,
+      {
+        method: 'GET',
+        credentials: 'include',
+      }
+    );
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const msg = data.error ?? 'Falha ao exportar projeto (.zip).';
+      set({ lastError: msg });
+      throw new Error(msg);
+    }
+
+    const blob = await res.blob();
+    const disp = res.headers.get('content-disposition') ?? '';
+    const match = disp.match(/filename="([^"]+)"/i);
+    const filename = match?.[1] ?? 'ai-office-mvp.zip';
+
+    const blobUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = blobUrl;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(blobUrl);
   },
 
   clearError: () => set({ lastError: null }),

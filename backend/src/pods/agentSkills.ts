@@ -95,4 +95,23 @@ export const DEPARTMENT_SKILL_PACKS: Record<
     systemPromptDirective:
       'Atue como Head of Growth Engineering. Construa uma página de lançamento persuasiva com calculadora financeira interativa e funil de ativação.',
   },
+
+  builder: {
+    department: 'builder',
+    skillName: 'react-vite-mvp-builder-and-verifier',
+    version: '2.0.0',
+    librariesAndStandards: [
+      'React 18 + TypeScript Strict + Vite 5',
+      'Tailwind CSS 3 + Lucide React Icons',
+      'Typed localStorage CRUD Service Layer',
+      'Consolidated /docs (README, Mermaid, SQL DDL)',
+    ],
+    qualityRules: [
+      'Gerar camada de dados tipada em src/types/ e src/services/ com seed realista e CRUD em localStorage.',
+      'Conectar todas as telas em src/pages/, src/components/ e src/App.tsx aos serviços reais sem mocks inertes.',
+      'Validar obrigatoriamente com tsc --noEmit e vite build antes de liberar para aprovação humana.',
+    ],
+    systemPromptDirective:
+      'Atue como Staff Full-Stack Builder. Gere um projeto React + Vite + TypeScript compilável, limpo e pronto para exportar em .zip.',
+  },
 };

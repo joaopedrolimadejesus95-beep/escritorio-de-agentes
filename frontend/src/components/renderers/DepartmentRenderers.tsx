@@ -2,7 +2,10 @@ import { useState } from 'react';
 import {
   Check,
   Code2,
+  Download,
   ExternalLink,
+  FileCode2,
+  FolderTree,
   Monitor,
   Smartphone,
 } from 'lucide-react';
@@ -982,6 +985,299 @@ export function GrowthRenderer({ content }: { content: Record<string, any> }) {
               ))}
             </ul>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// 5. BUILDER RENDERER (Status TypeScript/Vite + Árvore de Arquivos + Code Viewer)
+// ============================================================================
+
+export function BuilderRenderer({
+  content,
+  onExportZip,
+}: {
+  content: Record<string, any>;
+  onExportZip?: () => Promise<void>;
+}) {
+  const files = (content.files ?? []) as Array<{ path: string; content: string }>;
+  const defaultIdx = Math.max(
+    0,
+    files.findIndex((f) => f.path === 'src/App.tsx')
+  );
+  const [selectedIdx, setSelectedIdx] = useState(defaultIdx);
+  const [exporting, setExporting] = useState(false);
+
+  const activeFile = files[selectedIdx] ?? files[0];
+  const typecheckOk = Boolean(content.typecheckOk);
+  const buildOk = Boolean(content.buildOk);
+  const repairRounds = Number(content.repairRoundsUsed ?? 0);
+
+  const inferLang = (filePath: string): string => {
+    if (filePath.endsWith('.sql')) return 'sql';
+    if (filePath.endsWith('.md')) return 'markdown';
+    if (filePath.endsWith('.json')) return 'json';
+    if (filePath.endsWith('.html')) return 'html';
+    if (filePath.endsWith('.css')) return 'css';
+    if (filePath.endsWith('.mmd')) return 'mermaid';
+    return 'typescript';
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+      {/* Status do Build Real */}
+      <div style={cardStyle}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '10px',
+            marginBottom: '10px',
+          }}
+        >
+          <div style={sectionLabelStyle}>Status de Compilação & Empacotamento</div>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                padding: '4px 10px',
+                borderRadius: '999px',
+                fontSize: '11px',
+                fontWeight: 700,
+                background: typecheckOk
+                  ? 'rgba(16, 185, 129, 0.14)'
+                  : 'rgba(239, 68, 68, 0.14)',
+                border: `1px solid ${
+                  typecheckOk ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)'
+                }`,
+                color: typecheckOk ? '#6ee7b7' : '#fca5a5',
+              }}
+            >
+              <Check size={12} />
+              {typecheckOk ? 'TypeScript OK' : 'TypeScript Falhou'}
+            </span>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                padding: '4px 10px',
+                borderRadius: '999px',
+                fontSize: '11px',
+                fontWeight: 700,
+                background: buildOk
+                  ? 'rgba(16, 185, 129, 0.14)'
+                  : 'rgba(239, 68, 68, 0.14)',
+                border: `1px solid ${
+                  buildOk ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)'
+                }`,
+                color: buildOk ? '#6ee7b7' : '#fca5a5',
+              }}
+            >
+              <Check size={12} />
+              {buildOk ? 'Build OK' : 'Build Falhou'}
+            </span>
+          </div>
+        </div>
+        <p style={bodyTextStyle}>{content.summary}</p>
+        <div style={{ fontSize: '11.5px', color: '#94a3b8', marginTop: '8px' }}>
+          Arquivos no pacote: <strong>{files.length}</strong> · Rodadas de autocorreção:{' '}
+          <strong>{repairRounds}</strong>
+        </div>
+      </div>
+
+      {/* Árvore de Arquivos Gerados + Visualizador de Código */}
+      {files.length > 0 && (
+        <div
+          style={{
+            background: '#070a10',
+            border: '1px solid #1e293b',
+            borderRadius: '12px',
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '10px 14px',
+              background: '#0d131f',
+              borderBottom: '1px solid #1e293b',
+            }}
+          >
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '7px',
+                fontSize: '12px',
+                fontWeight: 700,
+                color: '#e2e8f0',
+              }}
+            >
+              <FolderTree size={14} color="#818cf8" />
+              Árvore do Projeto ({files.length} arquivos)
+            </div>
+            {onExportZip && buildOk && (
+              <button
+                type="button"
+                disabled={exporting}
+                onClick={async () => {
+                  setExporting(true);
+                  try {
+                    await onExportZip();
+                  } finally {
+                    setExporting(false);
+                  }
+                }}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  background: '#6366f1',
+                  border: 'none',
+                  color: '#ffffff',
+                  fontSize: '11.5px',
+                  fontWeight: 700,
+                  padding: '6px 12px',
+                  borderRadius: '7px',
+                  cursor: exporting ? 'not-allowed' : 'pointer',
+                }}
+              >
+                <Download size={13} />
+                {exporting ? 'Compactando...' : 'Exportar Projeto (.zip)'}
+              </button>
+            )}
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'minmax(200px, 240px) 1fr',
+              minHeight: '380px',
+            }}
+          >
+            <div
+              style={{
+                borderRight: '1px solid #1e293b',
+                padding: '8px',
+                maxHeight: '460px',
+                overflowY: 'auto',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '3px',
+              }}
+            >
+              {files.map((f, idx) => {
+                const active = idx === selectedIdx;
+                return (
+                  <button
+                    key={f.path}
+                    type="button"
+                    onClick={() => setSelectedIdx(idx)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      textAlign: 'left',
+                      width: '100%',
+                      padding: '6px 8px',
+                      borderRadius: '6px',
+                      border: 'none',
+                      background: active ? '#1e293b' : 'transparent',
+                      color: active ? '#f8fafc' : '#94a3b8',
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontSize: '11px',
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                    title={f.path}
+                  >
+                    <FileCode2
+                      size={12}
+                      color={active ? '#818cf8' : '#64748b'}
+                      style={{ flexShrink: 0 }}
+                    />
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {f.path}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{ padding: '10px', minWidth: 0 }}>
+              {activeFile && (
+                <CodeBlock
+                  title={activeFile.path}
+                  language={inferLang(activeFile.path)}
+                  code={activeFile.content}
+                  maxHeight="420px"
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rodapé de Exportação dedicado no Drawer do Builder */}
+      {onExportZip && (
+        <div
+          style={{
+            ...cardStyle,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+            flexWrap: 'wrap',
+          }}
+        >
+          <div>
+            <div style={{ fontSize: '12.5px', fontWeight: 700, color: '#f8fafc' }}>
+              Pacote Pronto para Execução Local
+            </div>
+            <div style={{ fontSize: '11.5px', color: '#94a3b8' }}>
+              Extraia o .zip e execute <code>npm install && npm run dev</code>. Inclui{' '}
+              <code>/docs</code> e camada <code>localStorage</code>.
+            </div>
+          </div>
+          <button
+            type="button"
+            disabled={!buildOk || exporting}
+            onClick={async () => {
+              setExporting(true);
+              try {
+                await onExportZip();
+              } finally {
+                setExporting(false);
+              }
+            }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '7px',
+              background: buildOk ? '#10b981' : '#1e293b',
+              color: buildOk ? '#051b14' : '#64748b',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '10px 16px',
+              fontSize: '12.5px',
+              fontWeight: 700,
+              cursor: !buildOk || exporting ? 'not-allowed' : 'pointer',
+            }}
+          >
+            <Download size={14} />
+            {exporting ? 'Gerando .zip...' : 'Exportar Projeto (.zip)'}
+          </button>
         </div>
       )}
     </div>

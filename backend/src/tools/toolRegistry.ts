@@ -219,7 +219,7 @@ export const HttpFetchPageTool: AgentToolDefinition<
   name: 'http_fetch_page',
   description:
     'Faz requisição HTTP GET em tempo real para ler conteúdo de páginas de concorrentes, documentações e artigos.',
-  allowedDepartments: ['research', 'design', 'engineering', 'growth'],
+  allowedDepartments: ['research', 'design', 'engineering', 'growth', 'builder'],
   inputSchema: HttpFetchInputSchema,
   async execute({ url, maxChars }) {
     try {
@@ -390,7 +390,7 @@ export const NpmPackageRadarTool: AgentToolDefinition<
   name: 'npm_package_radar',
   description:
     'Pesquisa pacotes reais no registro oficial do NPM (registry.npmjs.org) e versões atuais.',
-  allowedDepartments: ['research', 'design', 'engineering', 'growth'],
+  allowedDepartments: ['research', 'design', 'engineering', 'growth', 'builder'],
   inputSchema: NpmSearchInputSchema,
   async execute({ query, limit }) {
     const encoded = encodeURIComponent(query);
@@ -454,7 +454,7 @@ export const WorkspaceWriteFileTool: AgentToolDefinition<
   name: 'workspace_write_file',
   description:
     'Salva artefatos reais (HTML/Tailwind, SQL, Markdown, contratos) no diretório workspace_outputs do projeto.',
-  allowedDepartments: ['research', 'design', 'engineering', 'growth'],
+  allowedDepartments: ['research', 'design', 'engineering', 'growth', 'builder'],
   inputSchema: WorkspaceWriteInputSchema,
   async execute({ projectId, relativePath, content }) {
     const safeRelative = path

@@ -10,6 +10,7 @@ export const PlannedTaskDepartmentSchema = z.enum([
   'design',
   'engineering',
   'growth',
+  'builder',
 ]);
 
 export const PlannedTaskSchema = z.object({
@@ -154,6 +155,7 @@ Sua única responsabilidade é transformar o escopo do usuário em um Grafo Ací
 - "engineering": Arquitetura de sistema e engenharia técnica (decisões de stack justificadas, fluxo Mermaid, modelagem SQL e contratos de API).
 - "design": Design de interface e UX (paleta, tipografia e código HTML/Tailwind responsivo completo das telas principais).
 - "growth": Estratégia de lançamento, posicionamento comercial, canais de aquisição e modelo de precificação.
+- "builder": Construção real do Frontend MVP em React + Vite + TypeScript + Tailwind + localStorage dentro do template base, geração da pasta /docs e verificação com tsc --noEmit + vite build.
 
 Regras obrigatórias:
 1. Retorne JSON estrito com:
@@ -162,7 +164,7 @@ Regras obrigatórias:
      "tasks": [
        {
          "task_key": "snake_case_unico",
-         "department": "research" | "design" | "engineering" | "growth",
+         "department": "research" | "design" | "engineering" | "growth" | "builder",
          "objective": "Objetivo específico e detalhado adaptado ao domínio exato pedido pelo usuário",
          "depends_on": ["task_key_anterior"],
          "max_attempts": 3,
@@ -170,11 +172,12 @@ Regras obrigatórias:
        }
      ]
    }
-2. Crie exatamente 1 tarefa por departamento essencial (4 tarefas encadeadas no DAG):
-   - A tarefa de "research" não tem dependências (depends_on: []), requires_approval: true (para o usuário revisar a pesquisa antes de projetar).
-   - A tarefa de "engineering" (Arquitetura) depende da pesquisa (depends_on: [research_key]), requires_approval: true.
-   - A tarefa de "design" (Interface) depende da pesquisa e da arquitetura (depends_on: [research_key, engineering_key]), requires_approval: true.
-   - A tarefa de "growth" depende de engineering e design, requires_approval: false.
+2. Crie exatamente 1 tarefa por departamento essencial (5 tarefas encadeadas no DAG):
+   - "research": depends_on: [], requires_approval: true.
+   - "engineering": depends_on: [research_key], requires_approval: true.
+   - "design": depends_on: [research_key, engineering_key], requires_approval: true.
+   - "growth": depends_on: [engineering_key, design_key], requires_approval: false.
+   - "builder": depends_on: [research_key, engineering_key, design_key, growth_key], requires_approval: true (constrói o MVP React completo com CRUD real em localStorage e /docs, validado via build).
 3. Os objetivos devem citar explicitamente o domínio, público-alvo e funcionalidades centrais do escopo fornecido.`,
       userPrompt: `Escopo do projeto informado pelo usuário:\n"""\n${rawScope}\n"""\n\nGere o plano DAG em JSON.`,
       extraValidator: (plan) => {

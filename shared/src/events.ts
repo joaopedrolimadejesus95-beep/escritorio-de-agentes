@@ -10,6 +10,7 @@ export const DepartmentIdSchema = z.enum([
   'design',
   'engineering',
   'growth',
+  'builder',
 ]);
 export type DepartmentId = z.infer<typeof DepartmentIdSchema>;
 

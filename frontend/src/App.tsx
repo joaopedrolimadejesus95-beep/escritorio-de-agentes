@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   Cpu,
+  Download,
   History,
   LogIn,
   LogOut,
@@ -25,6 +26,7 @@ const PIPELINE_ORDER: DepartmentId[] = [
   'engineering',
   'design',
   'growth',
+  'builder',
 ];
 
 export function App() {
@@ -44,11 +46,18 @@ export function App() {
   const setAuthModalOpen = useOfficeStore((s) => s.setAuthModalOpen);
   const setHistoryModalOpen = useOfficeStore((s) => s.setHistoryModalOpen);
   const logout = useOfficeStore((s) => s.logout);
+  const artifacts = useOfficeStore((s) => s.artifacts);
+  const exportProjectZip = useOfficeStore((s) => s.exportProjectZip);
 
   const [scopeInput, setScopeInput] = useState(
     'Plataforma SaaS para gestão financeira e agendamento de clínicas odontológicas'
   );
   const [creating, setCreating] = useState(false);
+  const [exportingZip, setExportingZip] = useState(false);
+
+  const mvpReady = artifacts.some(
+    (a) => a.department === 'builder' && Boolean(a.content?.buildOk)
+  );
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -296,6 +305,42 @@ export function App() {
                 Entrar / Criar Conta
               </button>
             )}
+            <button
+              type="button"
+              disabled={!mvpReady || exportingZip}
+              onClick={async () => {
+                setExportingZip(true);
+                try {
+                  await exportProjectZip();
+                } catch {
+                  // Erro exibido no banner
+                } finally {
+                  setExportingZip(false);
+                }
+              }}
+              title={
+                mvpReady
+                  ? 'Baixar projeto Frontend MVP completo (.zip)'
+                  : 'Disponível após o Construtor MVP finalizar o build'
+              }
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                background: mvpReady ? '#10b981' : '#0f172a',
+                border: `1px solid ${mvpReady ? '#10b981' : '#1e293b'}`,
+                color: mvpReady ? '#051b14' : '#64748b',
+                borderRadius: '8px',
+                padding: '6px 10px',
+                fontSize: '11.5px',
+                fontWeight: 700,
+                cursor: !mvpReady || exportingZip ? 'not-allowed' : 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <Download size={13} />
+              {exportingZip ? 'Exportando...' : 'Exportar Projeto (.zip)'}
+            </button>
             <button
               type="button"
               onClick={() => setSettingsModalOpen(true)}
